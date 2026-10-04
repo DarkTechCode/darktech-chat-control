@@ -1130,10 +1130,6 @@ local function BuildWindow()
     })
     window:SetPoint("CENTER")
 
-    -- пред-объявление: OnSizeChanged ниже ссылается на sendEdit, без этого
-    -- замыкание в Lua 5.1 увидело бы ГЛОБАЛ sendEdit (nil)
-    local sendEdit
-
     local function SaveWindowGeometry()
         if not DTCC.db then return end
         DTCC.db.settings.winX = window:GetLeft()
@@ -1210,7 +1206,7 @@ local function BuildWindow()
     -- контейнер страниц
     local content = CreateFrame("Frame", nil, window)
     content:SetPoint("TOPLEFT", 14, -66)
-    content:SetPoint("BOTTOMRIGHT", -14, 58)
+    content:SetPoint("BOTTOMRIGHT", -14, 26)
 
     -- каждая вкладка строится в своём pcall: одна ошибка не должна
     -- ломать всё окно (и ошибку видно с номером вкладки)
@@ -1251,23 +1247,6 @@ local function BuildWindow()
         tabs[i] = tab
     end
 
-    -- нижняя панель: отправка в мировой чат
-    local sendLabel = MakeLabel(window, "Мировой чат (.chat):", "GameFontNormalSmall")
-    sendLabel:SetPoint("BOTTOMLEFT", 20, 24)
-
-    sendEdit = MakeEdit(window, 420, function(text)
-        DTCC.SendWorldMessage(text)
-        sendEdit:SetText("")
-    end)
-    sendEdit:SetPoint("BOTTOMLEFT", 130, 22)
-
-    local sendBtn = MakeButton(window, "Отправить", 100, function()
-        DTCC.SendWorldMessage(sendEdit:GetText())
-        sendEdit:SetText("")
-        sendEdit:ClearFocus()
-    end)
-    sendBtn:SetPoint("LEFT", sendEdit, "RIGHT", 10, 0)
-
     window.status = window:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
     -- отступ справа больше обычного: не залезать под уголок растягивания
     window.status:SetPoint("BOTTOMRIGHT", -24, 6)
@@ -1294,7 +1273,6 @@ local function BuildWindow()
     -- АКТИВНОЙ вкладки из кэша (поиск по всему логу на каждый пиксель
     -- растягивания давал бы фризы)
     window:SetScript("OnSizeChanged", function(self, w, h)
-        sendEdit:SetWidth(max(200, w - 252))
         LayoutAllPages()
         if currentTab == 1 then
             BLRender()
@@ -1308,7 +1286,6 @@ local function BuildWindow()
     end)
 
     -- первичная раскладка под восстановленный размер
-    sendEdit:SetWidth(max(200, window:GetWidth() - 252))
     LayoutAllPages()
 
     SelectTab(1)
