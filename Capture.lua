@@ -188,8 +188,11 @@ function DTCC.ClearLog()
     DTCC.FireEvent("LogChanged")
 end
 
--- Поиск по логу. opts: { text, name, minT, flags } — флаги: совпадение
--- с любым из указанных битов. Возвращает (результат-новые-сверху, всего найдено).
+-- Поиск по логу. opts: { text, name, minT, flags, includePlayers, includeRaw }.
+--   flags — совпадение с любым из указанных битов (0 = любой тип);
+--   includePlayers/includeRaw — источники: обычные сообщения игроков и
+--   RAW-записи (системные строки с ссылкой игрока). nil = источник включён.
+-- Возвращает (результат-новые-сверху, всего найдено).
 function DTCC.LogSearch(opts)
     local db = DTCC.db
     if not db then return {}, 0 end
@@ -199,6 +202,10 @@ function DTCC.LogSearch(opts)
     local nameF = opts.name and DTCC.utf8lower(strtrim(opts.name)) or ""
     local minT = opts.minT or 0
     local needFlags = opts.flags or 0
+    local includePlayers = opts.includePlayers
+    local includeRaw = opts.includeRaw
+    if includePlayers == nil then includePlayers = true end
+    if includeRaw == nil then includeRaw = true end
 
     local res, total = {}, 0
     local log = db.log
@@ -206,14 +213,17 @@ function DTCC.LogSearch(opts)
         local e = log[i]
         if e and (not e.t or e.t >= minT) then
             local ok = true
-            if textF ~= "" then
+            if bit.band(e.f or 0, DTCC.FLAG_RAW) ~= 0 then
+                ok = includeRaw
+            else
+                ok = includePlayers
+                    and (needFlags == 0 or bit.band(e.f or 0, needFlags) ~= 0)
+            end
+            if ok and textF ~= "" then
                 ok = string.find(DTCC.utf8lower(tostring(e.m or "")), textF, 1, true) ~= nil
             end
             if ok and nameF ~= "" then
                 ok = string.find(DTCC.utf8lower(tostring(e.p or "")), nameF, 1, true) ~= nil
-            end
-            if ok and needFlags ~= 0 then
-                ok = bit.band(e.f or 0, needFlags) ~= 0
             end
             if ok then
                 total = total + 1

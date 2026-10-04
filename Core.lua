@@ -231,6 +231,9 @@ local DEFAULTS = {
 
         logEnabled      = true,
         logLimit        = 3000,
+        logShowPlayers  = true,   -- фильтр вкладки «Лог»: сообщения игроков
+        logShowRaw      = false,  -- ... RAW-записи (системные строки с игроком)
+        logFilterFlags  = 0,      -- «только эти типы» (маска флагов; 0 = все типы)
 
         alertEnabled    = true,   -- алерты о ЧС рядом
         alertPopup      = true,   -- всплывающее окно (в стиле SilverDragon)

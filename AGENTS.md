@@ -59,21 +59,40 @@ README.md — пользовательская документация (не з
    удваивает кириллицу). Подсветку hover делать через `SetHighlightTexture`
    (текстуру создавать слоем BACKGROUND, не «HIGHLIGHT»). Исходники интерфейса
    3.3.5 (все FrameXML): https://github.com/wowgaming/3.3.5-interface-files.
-7. **Хит-зона чекбокса — ровно по подписи**:
+7. **Гиперссылки (|Hitem:…|h) в своём UI работают только через
+   ScrollingMessageFrame.** У SMF есть скрипты `OnHyperlinkClick` (клик →
+   `SetItemRef(link, text, button, self)` — открывает подсказку, как в чате);
+   `OnHyperlinkEnter/Leave` (тултип при наведении) в 3.3.5 клиентом в чате не
+   используются — подключать через `pcall(SetScript, ...)`: если клиент не
+   поддерживает — просто не сработает. Обычные FontString на обычных фреймах
+   ссылками не кликаются (SetHyperlinksEnabled появился в 4.0.6).
+   Паттерн «строка лога»: контейнер-Frame + кнопка на левую часть (тултип,
+   ПКМ-меню) + дочерний SMF на текст (`SetMaxLines(1)` + `AddMessage` =
+   «SetText» — метода SetText у SMF нет, `Clear()` в 3.3.5 не гарантирован,
+   maxLines(1) сам выталкивает старую строку). SMF переносит текст по ширине
+   фрейма. Пример: вкладка «Лог» в Window.lua.
+8. **Хит-зона чекбокса — ровно по подписи**:
    `cb:SetHitRectInsets(0, -(label:GetStringWidth() + 10), 0, 0)`. Фиксированные
    −400/−460 создавали невидимые зоны, перекрывающие соседние контролы (клик по
    «Режим:» переключал «Цензура включена»).
-8. **Пустой многострочный EditBox схлопывается до одной строки** (кликом не
+9. **Пустой многострочный EditBox схлопывается до одной строки** (кликом не
    попасть) → сажать в контейнер фиксированного размера: фон/размер на нём,
    `EnableMouse(true)` + `OnMouseDown → editbox:SetFocus()` (редакторы слов в
    Window.lua и Options.lua).
-9. **FauxScrollFrame**: строки не шире `RIGHT -30…-34` от страницы, иначе
+10. **FauxScrollFrame**: строки не шире `RIGHT -30…-34` от страницы, иначе
    залезают под слайдер (скроллбар висит у правого края скролл-фрейма).
-10. **Панель настроек**: `InterfaceOptions_AddCategory(panel)`,
+   Для списков с ПЕРЕМЕННОЙ высотой строк (многострочный лог) FauxScrollFrame
+   не подходит (линия фиксированной высоты): свой `Slider` c
+   `UIPanelScrollBarTemplate` + `SetScript("OnValueChanged")` ВЕСЬ переопределять
+   (шаблонный дёргает `parent:SetVerticalScroll` — родитель должен быть
+   ScrollFrame) + `OnMouseWheel` на странице; офсет в записях, maxOff — проход
+   с конца, высоты строк кэшировать по «запись + ширина колонки». Пример:
+   вкладка «Лог» в Window.lua.
+11. **Панель настроек**: `InterfaceOptions_AddCategory(panel)`,
     `InterfaceOptionsFrame_OpenToCategory` вызывать дважды. Ошибки внутри
     pcall-диспетчера событий НЕ видны Swatter'ом — только строкой в чат.
     Сборку каждой вкладки держать в pcall (уже сделано в Window.lua).
-11. **Диагностика в игре**: `/console scriptErrors 1`; `/dtcc debug on`
+12. **Диагностика в игре**: `/console scriptErrors 1`; `/dtcc debug on`
     (печатает все системные/канальные строки с экранированными кодами цвета).
 
 ## Карта кода
@@ -87,7 +106,7 @@ README.md — пользовательская документация (не з
 | Capture.lua | 3-уровневый парсер (strict mod-world-chat → tolerant → RAW), `ParseWorldMessage`, `LogAdd/LogSearch/ClearLog`, `SendWorldMessage` (`.chat` через SAY), фильтры CHAT_MSG_SYSTEM/CHANNEL, конвейер `ProcessChatLine` |
 | Alerts.lua | `DTCC.SOUNDS`, пул попапов, `FireProximityAlert`, детект (mouseover/target/focus/say/yell/emote) |
 | Options.lua | панель Interface Options (`NewCheck/NewDropdown/NewButton/NewEdit/NewSection`, `Refresh` по SettingsChanged, StaticPopup-диалоги очистки лога/сброса) |
-| Window.lua | окно: вкладки ЧС (сортировка по заголовкам + колонка «Добавлен»), Друзья, Лог, Цензура (единственный редактор слов на всю вкладку: `CNRefresh(true)` при открытии грузит слова в поле, `cnFieldDirty` защищает недопечатанное от затирания, `CNLayout` растягивает EditBox под вкладку); контекстное меню `MenuDescriptor` (режимы `bl/friend/log`). Окно растягивается за грип `DTCCWindowResizeGrip` (`SetResizable` + `StartSizing("BOTTOMRIGHT")`, на время растягивания `SetClampedToScreen(false)`): по вкладкам-спискам тройка `XXLayout` (число видимых строк + ширина последней колонки) → `XXRender` (из кэша — вызывается на каждый `OnSizeChanged` во время растягивания, полные поиск/сортировка там нельзя — фризы) → `XXRefresh` (полный пересчёт). Пул строк `ROW_POOL` (32), offset подрезает `ClampScroll`, текст в колонки укладывает `FitText`. Размер/позиция — `settings.winW/winH/winX/winY` |
+| Window.lua | окно: вкладки ЧС (сортировка по заголовкам + колонка «Добавлен»), Друзья, Лог (галочки-фильтры «Игроки/RAW/типы» в одну строку, состояние в `settings.logShowPlayers/logShowRaw/logFilterFlags`; строки переменной высоты: сообщение в дочернем SMF на всю ширину с переносом, кликабельные |Hitem|-ссылки; свой Slider + колесо; кнопка «Очистить лог» → StaticPopup), Цензура (единственный редактор слов на всю вкладку: `CNRefresh(true)` при открытии грузит слова в поле, `cnFieldDirty` защищает недопечатанное от затирания, `CNLayout` растягивает EditBox под вкладку); контекстное меню `MenuDescriptor` (режимы `bl/friend/log`). Окно растягивается за грип `DTCCWindowResizeGrip` (`SetResizable` + `StartSizing("BOTTOMRIGHT")`, на время растягивания `SetClampedToScreen(false)`): по вкладкам-спискам ЧС/Друзья тройка `XXLayout` (число видимых строк + ширина последней колонки) → `XXRender` (из кэша — вызывается на каждый `OnSizeChanged` во время растягивания, полные поиск/сортировка там нельзя — фризы) → `XXRefresh` (полный пересчёт); лог: `LogRefresh` (поиск+подпись) → `LogRender` (перемер только видимых+последней страницы, кэш высот `logHeightCache` по «запись+ширина», перенос считает `LogCountLines` по ширинам слов `LogWordWidth`). Пул строк `ROW_POOL` (32), offset подрезает `ClampScroll` (ЧС/друзья) / maxOff-проход (лог), текст в колонки укладывает `FitText`. Размер/позиция — `settings.winW/winH/winX/winY` |
 | Minimap.lua | кнопка миникарты (`RegisterForDrag`, защита от коллекторов DragonUI) |
 
 Порядок конвейера в `ProcessChatLine` (менять осторожно): флаги списков →
@@ -135,6 +154,21 @@ README.md — пользовательская документация (не з
 
 ## Текущее состояние (обновляй при релизе)
 
+- **v1.5.0 (2026-10-04)**: вкладка «Лог» переработана: по умолчанию только
+  сообщения игроков (RAW-системные строки выключены, включаются галочкой);
+  фильтры-галочки в одну строку (источники «Игроки»/«RAW (системные)» + типы
+  Друзья/ЧС/Скрытые/Цензура/Авто-ЧС; состояние в
+  `logShowPlayers/logShowRaw/logFilterFlags`); колонки сжаты (сообщение с
+  x=174, зазоры 4px), колонка «Отметки» убрана; сообщение на всю ширину,
+  перенос на несколько строк без «…» (высоты строк переменные, свой Slider
+  `DTCCWin_LogScroll` + колесо мыши вместо FauxScrollFrame); текст сообщения
+  в дочернем ScrollingMessageFrame — |Hitem|-ссылки открывают подсказку по
+  клику (OnHyperlinkClick → SetItemRef), OnHyperlinkEnter подключён через
+  pcall (3.3.5 его в чате не поддерживает); кнопка «Очистить лог» (правый
+  верхний угол) → StaticPopup `DTCC_CLEAR_LOG`; `LogSearch` расширен
+  (`includePlayers/includeRaw`, типы не касаются RAW). UI-тесты: галочки,
+  RAW по умолчанию скрыт, маска типов, ссылка предмета, многострочность,
+  слайдер/колесо, очистка. Ждёт плейтеста в игре.
 - **v1.4.1 (2026-10-04)**: вкладка «Цензура» — один редактор слов на всю
   вкладку (грузится из сохранённых при открытии; «Применить»/«Обновить» →
   «Сохранить» + «Построчно»/«Через запятую» через `Censor_NormalizeList` без

@@ -4,7 +4,9 @@
     Вкладки:
       1. Чёрный список — добавление/удаление, сроки, причина (ПКМ — меню);
       2. Друзья;
-      3. Лог — поиск по тексту и игроку, фильтры по периоду и типу,
+      3. Лог — поиск по тексту и игроку, фильтры-галочки в одну строку
+         (по умолчанию только сообщения игроков), сообщение на всю ширину
+         с переносом строк и кликабельными ссылками предметов (SMF),
          действия над автором сообщения через ПКМ;
       4. Цензура — редактор списка слов на всю вкладку (сохранённые слова
          грузятся в поле при открытии, «Построчно»/«Через запятую»
@@ -602,14 +604,38 @@ end
 
 --------------------------------------------------------------------------------
 -- Вкладка «Лог»
+--
+-- Фильтры — галочки в одну строку: «Игроки» (по умолчанию включено, только
+-- сообщения мирового чата), «RAW» (системные строки со ссылкой игрока:
+-- входы, достижения и т.п.) и типы ЧС/скрытые/цензура/авто-ЧС/друзья
+-- (не отмечено ничего = любой тип). Сообщение занимает всю ширину окна
+-- и переносится на несколько строк (без «…») — высота строки переменная,
+-- поэтому скролл свой (Slider), не FauxScrollFrame. Текст сообщения лежит
+-- в ScrollingMessageFrame: ссылки предметов работают как в чате — клик
+-- открывает подсказку (тултип при НАВЕДЕНИИ клиент 3.3.5 не поддерживает,
+-- обработчик подключён на случай более новых клиентов).
 --------------------------------------------------------------------------------
 
-local logPage, logScroll, logRows, logItems
-local logTextEdit, logNameEdit, logPeriodDD, logTypeDD, logCountLabel
-local logPeriodValue, logTypeValue = 0, 0
+local logPage, logRows, logItems
+local logTextEdit, logNameEdit, logPeriodDD, logCountLabel
+local logSlider
+local logCheckboxes = {}   -- players / raw / bl / hidden / censor / autobl / friend
+local logFlagChecks = {}   -- { { cb = .., flag = .. } } — маска «только эти типы»
+local logPeriodValue = 0
 local logTotal = 0
-local logVisible = 10  -- видимых строк (зависит от высоты окна)
-local logBudget = 44   -- бюджет символов колонки «Сообщение» (от ширины)
+local logOff = 0           -- индекс первой видимой записи (0-based, сверху)
+local logHeightCache = {}  -- [запись] = { w = ширина колонки, h = высота строки }
+local logMeasure           -- скрытый fontstring: замер ширины слов/строк
+local logLineH = 12        -- высота одной строки шрифта сообщения
+local logSpaceW = 4        -- ширина пробела
+local logWordWidths = {}   -- кэш ширин слов (от ширины колонки не зависит)
+local logRendering = false -- защита от повторного входа через OnValueChanged
+
+local LOG_TIME_W  = 70     -- колонка «Время»
+local LOG_NAME_W  = 86     -- колонка «Игрок»
+local LOG_MSG_X   = 168    -- X колонки «Сообщение» (в координатах строки)
+local LOG_TOP     = 78     -- верх списка: панели поиска/фильтров + заголовки
+local LOG_BOTTOM  = 8
 
 local PERIODS = {
     { text = "Всё время",   value = 0     },
@@ -617,16 +643,6 @@ local PERIODS = {
     { text = "3 дня",       value = 3     },
     { text = "Неделя",      value = 7     },
     { text = "Месяц",       value = 30    },
-}
-
-local LOG_TYPES = {
-    { text = "Все",          value = 0 },
-    { text = "ЧС",           value = DTCC.FLAG_BLACKLIST },
-    { text = "Скрытые",      value = DTCC.FLAG_HIDDEN },
-    { text = "Цензура",      value = DTCC.FLAG_CENSORED },
-    { text = "Авто-ЧС",      value = DTCC.FLAG_AUTOBL },
-    { text = "Друзья",       value = DTCC.FLAG_FRIEND },
-    { text = "RAW (сырые)",  value = DTCC.FLAG_RAW },
 }
 
 local function ComputeMinT(days)
@@ -639,80 +655,189 @@ local function ComputeMinT(days)
     return time() - days * 86400
 end
 
-local function LogTags(flags)
-    local tags = {}
-    if bit.band(flags, DTCC.FLAG_RAW) ~= 0 then
-        tags[#tags + 1] = "|cff00e5ffRAW|r"
+-- Ширина слова тем же шрифтом, что сообщение (замер один раз, кэш)
+local logWordN = 0
+local function LogWordWidth(word)
+    local w = logWordWidths[word]
+    if w == nil then
+        if logMeasure then
+            logMeasure:SetText(word)
+            w = logMeasure:GetStringWidth()
+        else
+            w = strlen(word) * 6
+        end
+        logWordN = logWordN + 1
+        if logWordN > 8192 then
+            wipe(logWordWidths) -- кэш не должен расти бесконечно на больших логах
+            logWordN = 1
+        end
+        logWordWidths[word] = w
     end
-    if bit.band(flags, DTCC.FLAG_AUTOBL) ~= 0 then
-        tags[#tags + 1] = "|cffff8c00АВТО|r"
+    return w
+end
+
+-- Число строк при переносе текста по ширине lineW: слова переносятся по
+-- пробелам, слишком длинное слово (ссылка) ломается по символам — как nonspacewrap
+-- в игровом чате
+local function LogCountLines(text, lineW)
+    local n, x = 1, 0
+    for word in string.gmatch(text, "%S+") do
+        local w = LogWordWidth(word)
+        if w > lineW then
+            if x > 0 then n = n + 1 end
+            local full = floor(w / lineW)
+            n = n + full
+            x = w - full * lineW
+        elseif x == 0 then
+            x = w
+        elseif x + logSpaceW + w <= lineW then
+            x = x + logSpaceW + w
+        else
+            n = n + 1
+            x = w
+        end
     end
-    if bit.band(flags, DTCC.FLAG_BLACKLIST) ~= 0 then
-        tags[#tags + 1] = "|cffff4a4aЧС|r"
+    return n
+end
+
+-- Высота строки лога: перенос сообщения в несколько строк + запас.
+-- Возвращает (высота строки, высота блока текста для SMF — тем же шрифтом,
+-- без запаса, чтобы текст не «уезжал» вниз внутри более высокой строки).
+-- Кэшируется по записи; ширина колонки хранится в кэше (ресайз = перемер).
+local function LogRowHeight(e, msgW)
+    local c = logHeightCache[e]
+    if c and c.w == msgW then return c.h, c.m end
+    local lines = LogCountLines(DTCC.StripAll(e.m or ""), msgW - 4)
+    local textH = lines * logLineH
+    local h = max(ROW_H, textH + 6)
+    local m = textH + 4
+    logHeightCache[e] = { w = msgW, h = h, m = m }
+    return h, m
+end
+
+local LogRenderInner
+
+local function LogRender()
+    if logRendering then return end
+    logRendering = true
+    -- pcall: ошибка в середине рендера не должна навсегда оставить флаг
+    local ok, err = pcall(LogRenderInner)
+    logRendering = false
+    if not ok then error(err, 0) end
+end
+
+LogRenderInner = function()
+    if not logPage or not logRows then return end
+    logItems = logItems or {}
+    local n = #logItems
+    local pageH = max(ROW_H, logPage:GetHeight() - LOG_TOP - LOG_BOTTOM)
+    local msgW = max(60, logPage:GetWidth() - LOG_MSG_X - 36)
+
+    -- максимальный офсет: последняя страница целиком видна (снизу вверх)
+    local y, idx, shown = 0, n, 0
+    while idx >= 1 do
+        local h = LogRowHeight(logItems[idx], msgW)
+        if y + h > pageH and shown > 0 then break end
+        y = y + h
+        shown = shown + 1
+        idx = idx - 1
     end
-    if bit.band(flags, DTCC.FLAG_HIDDEN) ~= 0 then
-        tags[#tags + 1] = "|cff909090СКР|r"
+    local maxOff = idx
+    if logOff > maxOff then logOff = maxOff end
+    if logOff < 0 then logOff = 0 end
+    local off = logOff
+
+    y = 0
+    for i = 1, ROW_POOL do
+        local row = logRows[i]
+        local e = logItems[off + i]
+        local h, msgH
+        if e then h, msgH = LogRowHeight(e, msgW) end
+        if e and h and (y + h <= pageH or i == 1) then
+            row.entry = e
+            y = y + h
+            row:SetWidth(max(60, logPage:GetWidth() - 12))
+            row:SetHeight(h)
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", logPage, "TOPLEFT", 6, -(LOG_TOP + (y - h)))
+            row.head.entry = e
+            row.head.timeF:SetText(DTCC.FormatTimeShort(e.t))
+            row.head.timeF:SetTextColor(0.55, 0.55, 0.55)
+            FitText(row.head.nameF, e.p, floor(LOG_NAME_W / 6))
+            if DTCC.Blacklist_Get(e.p) then
+                row.head.nameF:SetTextColor(1, 0.35, 0.35)
+            elseif DTCC.Friends_Get(e.p) then
+                row.head.nameF:SetTextColor(0.4, 1, 0.4)
+            else
+                row.head.nameF:SetTextColor(0.85, 0.9, 1)
+            end
+            -- сообщение в SMF: при смене записи/ширины перезаливаем
+            -- (SetMaxLines(1) сам выталкивает старую строку, Clear в 3.3.5 не гарантирован)
+            if row.smfEntry ~= e or row.smfW ~= msgW then
+                row.smf:SetWidth(msgW)
+                row.smfEntry, row.smfW = e, msgW
+                pcall(row.smf.Clear, row.smf)
+                row.smf:AddMessage(tostring(e.m or ""), 0.92, 0.92, 0.92)
+            end
+            row.smf:SetHeight(msgH)
+            row:Show()
+        else
+            row.entry = nil
+            row.head.entry = nil
+            row:Hide()
+        end
     end
-    if bit.band(flags, DTCC.FLAG_CENSORED) ~= 0 then
-        tags[#tags + 1] = "|cffffd100ЦЕНЗ|r"
+
+    if logSlider then
+        if maxOff > 0 then logSlider:Show() else logSlider:Hide() end
+        logSlider:SetMinMaxValues(0, maxOff)
+        local cur = floor((tonumber(logSlider:GetValue()) or 0) + 0.5)
+        if cur ~= off then logSlider:SetValue(off) end
     end
-    if bit.band(flags, DTCC.FLAG_FRIEND) ~= 0 then
-        tags[#tags + 1] = "|cff3fd13fДРУГ|r"
+end
+
+local function SetLogOffset(v)
+    if v < 0 then v = 0 end
+    if v == logOff then return end
+    logOff = v
+    LogRender() -- верхнюю границу подрежет сам рендер
+end
+
+-- Текущая маска фильтров из состояния галочек
+local function LogFilterState()
+    local players = logCheckboxes.players and logCheckboxes.players:GetChecked() and true or false
+    local raw = logCheckboxes.raw and logCheckboxes.raw:GetChecked() and true or false
+    local flags = 0
+    for _, fc in ipairs(logFlagChecks) do
+        if fc.cb:GetChecked() then flags = flags + fc.flag end
     end
-    return table.concat(tags, " ")
+    return players, raw, flags
 end
 
 local function LogSearch()
+    local players, raw, flags = LogFilterState()
     local res, total = DTCC.LogSearch({
         text = logTextEdit:GetText(),
         name = logNameEdit:GetText(),
         minT = ComputeMinT(logPeriodValue),
-        flags = logTypeValue,
+        flags = flags,
+        includePlayers = players,
+        includeRaw = raw,
     })
     logItems = res
     logTotal = total
-end
-
--- Перерисовать строки из кэша logItems (без поиска по всему логу — поиск
--- тяжёлый и во время растягивания окна вызывал бы фризы)
-local function LogRender()
-    if not logScroll or not logRows then return end
-    logItems = logItems or {}
-    local off = ClampScroll(logScroll, #logItems, logVisible, ROW_H)
-    for i = 1, ROW_POOL do
-        local row = logRows[i]
-        local e = (i <= logVisible) and logItems[off + i] or nil
-        if e then
-            row.entry = e
-            row:Show()
-            row.texts[1]:SetText(DTCC.FormatTimeShort(e.t))
-            row.texts[1]:SetTextColor(0.55, 0.55, 0.55)
-            row.texts[2]:SetText(e.p)
-            if DTCC.Blacklist_Get(e.p) then
-                row.texts[2]:SetTextColor(1, 0.35, 0.35)
-            elseif DTCC.Friends_Get(e.p) then
-                row.texts[2]:SetTextColor(0.4, 1, 0.4)
-            else
-                row.texts[2]:SetTextColor(0.85, 0.9, 1)
-            end
-            row.texts[3]:SetText(LogTags(e.f or 0))
-            FitText(row.texts[4], e.m, logBudget)
-            row.texts[4]:SetTextColor(0.9, 0.9, 0.9)
-        else
-            row.entry = nil
-            row:Hide()
-        end
-    end
-    FauxScrollFrame_Update(logScroll, #logItems, logVisible, ROW_H)
+    return players, raw
 end
 
 local function LogRefresh()
     if not window or not window:IsShown() or currentTab ~= 3 then return end
-    if not logScroll or not logRows or not logTextEdit then return end
-    LogSearch()
+    if not logRows or not logTextEdit then return end
+    local players, raw = LogSearch()
 
     local inLog = (DTCC.db and DTCC.db.log) and #DTCC.db.log or 0
-    if logTotal == 0 then
+    if not players and not raw then
+        logCountLabel:SetText("Все источники выключены — отметьте «Игроки» или «RAW»")
+    elseif logTotal == 0 then
         if inLog == 0 then
             logCountLabel:SetText("Найдено: 0 / в логе: 0   |cff909090(если сообщения не попадают в лог — /dtcc debug on и напишите в чат)|r")
         else
@@ -725,26 +850,15 @@ local function LogRefresh()
     LogRender()
 end
 
-local function LogLayout()
-    if not logPage or not logRows then return end
-    logVisible = RowsForHeight(logPage:GetHeight(), 72, ROW_H, ROW_POOL)
-    local lastW = max(80, logPage:GetWidth() - 344 - 46)
-    logBudget = max(10, floor(lastW / 6))
-    for i = 1, ROW_POOL do
-        logRows[i].texts[4]:SetWidth(lastW)
-    end
-end
-
-local function LogTooltip(row)
-    local e = row.entry
+local function LogTooltip(self)
+    local e = self.entry
     if not e then return end
-    GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:ClearLines()
     GameTooltip:AddLine(e.p .. "  —  " .. DTCC.FormatDateFull(e.t), 0.85, 0.9, 1)
-    GameTooltip:AddLine(e.m or "", 1, 1, 1, 1)
     local flags = e.f or 0
     local desc = {}
-    if bit.band(flags, DTCC.FLAG_RAW) ~= 0 then tinsert(desc, "сырая запись: формат строки не распознан") end
+    if bit.band(flags, DTCC.FLAG_RAW) ~= 0 then tinsert(desc, "сырая системная строка (формат не распознан)") end
     if bit.band(flags, DTCC.FLAG_HIDDEN) ~= 0 then tinsert(desc, "скрыто (ЧС)") end
     if bit.band(flags, DTCC.FLAG_CENSORED) ~= 0 then tinsert(desc, "цензура") end
     if bit.band(flags, DTCC.FLAG_AUTOBL) ~= 0 then tinsert(desc, "авто-добавление в ЧС") end
@@ -752,7 +866,7 @@ local function LogTooltip(row)
     if #desc > 0 then
         GameTooltip:AddLine(table.concat(desc, ", "), 0.7, 0.7, 0.7)
     end
-    GameTooltip:AddLine("ПКМ — действия над игроком", 0.5, 0.5, 0.5)
+    GameTooltip:AddLine("ПКМ — действия над игроком; клик по предмету — подсказка", 0.5, 0.5, 0.5)
     GameTooltip:Show()
 end
 
@@ -761,6 +875,7 @@ local function BuildLogPage(parent)
     logPage:SetAllPoints()
     pages[3] = logPage
 
+    -- строка 1: поиск по тексту/игроку, период, поиск; справа — очистка лога
     local lbl1 = MakeLabel(logPage, "Текст:", "GameFontNormalSmall")
     lbl1:SetPoint("TOPLEFT", 6, -6)
     logTextEdit = MakeEdit(logPage, 110, function() LogRefresh() end)
@@ -773,53 +888,189 @@ local function BuildLogPage(parent)
 
     logPeriodDD = MakeDropdown(logPage, PERIODS,
         function() return logPeriodValue end,
-        function(v) logPeriodValue = v end,
+        function(v)
+            logPeriodValue = v
+            LogRefresh()
+        end,
         100, "DTCCWin_LogPeriod")
     logPeriodDD:SetPoint("TOPLEFT", 318, -6)
 
-    logTypeDD = MakeDropdown(logPage, LOG_TYPES,
-        function() return logTypeValue end,
-        function(v) logTypeValue = v end,
-        100, "DTCCWin_LogType")
-    logTypeDD:SetPoint("TOPLEFT", 432, -6)
-
     local searchBtn = MakeButton(logPage, "Искать", 62, function() LogRefresh() end)
-    searchBtn:SetPoint("TOPLEFT", 546, -4)
+    searchBtn:SetPoint("TOPLEFT", 428, -4)
+
+    local clearBtn = MakeButton(logPage, "Очистить лог", 100, function()
+        StaticPopup_Show("DTCC_CLEAR_LOG")
+    end, "DTCCWin_LogClear")
+    clearBtn:SetPoint("TOPRIGHT", logPage, "TOPRIGHT", -8, -4)
+    clearBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:SetText("Очистить лог", 0.95, 0.95, 0.95)
+        GameTooltip:AddLine("Полностью удаляет все записи лога (с подтверждением).", nil, nil, nil, 1)
+        GameTooltip:Show()
+    end)
+    clearBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    -- строка 2: фильтры-галочки в одну строку
+    local function SourceCheck(settingKey, ckey, labelText, tooltip, x)
+        local cb = DTCC.UI.Check(logPage, labelText, tooltip, function(v)
+            if DTCC.db then DTCC.db.settings[settingKey] = v end
+            DTCC.FireEvent("SettingsChanged")
+            LogRefresh()
+        end)
+        if x then cb:SetPoint("TOPLEFT", x, -30) end
+        if DTCC.db then cb:SetChecked(DTCC.db.settings[settingKey]) end
+        logCheckboxes[ckey] = cb
+        return cb
+    end
+
+    local cbPlayers = SourceCheck("logShowPlayers", "players", "Игроки",
+        "Сообщения мирового чата от игроков.\nПо умолчанию включено — системные строки не показываются.", 4)
+    local cbRaw = SourceCheck("logShowRaw", "raw", "RAW (системные)",
+        "Строки со ссылкой игрока, записанные как есть: входы, достижения,\nлут и другой системный мусор в нестандартном формате.",
+        nil)
+    cbRaw:SetPoint("LEFT", cbPlayers, "RIGHT", 12, 0)
+
+    local function FlagCheck(prev, key, flag, labelText, tooltip)
+        local cb = DTCC.UI.Check(logPage, labelText, tooltip, function()
+            local _, _, mask = LogFilterState()
+            if DTCC.db then DTCC.db.settings.logFilterFlags = mask end
+            DTCC.FireEvent("SettingsChanged")
+            LogRefresh()
+        end)
+        if prev then
+            cb:SetPoint("LEFT", prev, "RIGHT", 12, 0)
+        else
+            cb:SetPoint("LEFT", cbRaw, "RIGHT", 12, 0)
+        end
+        if DTCC.db then
+            cb:SetChecked(bit.band(tonumber(DTCC.db.settings.logFilterFlags) or 0, flag) ~= 0)
+        end
+        logCheckboxes[key] = cb
+        logFlagChecks[#logFlagChecks + 1] = { cb = cb, flag = flag }
+        return cb
+    end
+
+    local cbFriend = FlagCheck(nil, "friend", DTCC.FLAG_FRIEND, "Друзья",
+        "Только сообщения игроков из списка друзей.")
+    local cbBL = FlagCheck(cbFriend, "bl", DTCC.FLAG_BLACKLIST, "ЧС",
+        "Только сообщения игроков из чёрного списка.")
+    local cbHidden = FlagCheck(cbBL, "hidden", DTCC.FLAG_HIDDEN, "Скрытые",
+        "Только сообщения, скрытые из чата (игрок в ЧС).")
+    local cbCensor = FlagCheck(cbHidden, "censor", DTCC.FLAG_CENSORED, "Цензура",
+        "Только сообщения с запрещёнными словами.")
+    FlagCheck(cbCensor, "autobl", DTCC.FLAG_AUTOBL, "Авто-ЧС",
+        "Только сообщения, за которые игрок попал в ЧС автоматически.")
 
     logCountLabel = MakeLabel(logPage, "", "GameFontNormalSmall")
     logCountLabel:SetTextColor(0.6, 0.6, 0.6)
-    logCountLabel:SetPoint("TOPLEFT", 6, -28)
+    logCountLabel:SetPoint("TOPLEFT", 6, -58)
 
-    local h1 = MakeLabel(logPage, "Время");   h1:SetTextColor(0.5, 0.5, 0.5); h1:SetPoint("TOPLEFT", 4, -48)
-    local h2 = MakeLabel(logPage, "Игрок");   h2:SetTextColor(0.5, 0.5, 0.5); h2:SetPoint("TOPLEFT", 90, -48)
-    local h3 = MakeLabel(logPage, "Отметки"); h3:SetTextColor(0.5, 0.5, 0.5); h3:SetPoint("TOPLEFT", 216, -48)
-    local h4 = MakeLabel(logPage, "Сообщение")
-    h4:SetTextColor(0.5, 0.5, 0.5); h4:SetPoint("TOPLEFT", 344, -48)
+    local h1 = MakeLabel(logPage, "Время");     h1:SetTextColor(0.5, 0.5, 0.5); h1:SetPoint("TOPLEFT", 10, -72)
+    local h2 = MakeLabel(logPage, "Игрок");     h2:SetTextColor(0.5, 0.5, 0.5); h2:SetPoint("TOPLEFT", 84, -72)
+    local h3 = MakeLabel(logPage, "Сообщение"); h3:SetTextColor(0.5, 0.5, 0.5); h3:SetPoint("TOPLEFT", 174, -72)
 
-    logScroll = CreateFrame("ScrollFrame", "DTCCWinLogScroll", logPage, "FauxScrollFrameTemplate")
-    logScroll:SetPoint("TOPLEFT", 6, -64)
-    logScroll:SetPoint("BOTTOMRIGHT", -28, 8)
-    logScroll:SetScript("OnVerticalScroll", function(self, offset)
-        FauxScrollFrame_OnVerticalScroll(self, offset, ROW_H, LogRefresh)
+    -- скрытый fontstring для замеров шрифта сообщений
+    logMeasure = logPage:CreateFontString(nil, "BACKGROUND", "GameFontNormalSmall")
+    logMeasure:Hide()
+    logMeasure:SetText("n n")
+    local withSpace = logMeasure:GetStringWidth()
+    logMeasure:SetText("nn")
+    logSpaceW = max(1, withSpace - logMeasure:GetStringWidth())
+    logMeasure:SetText("Йё")
+    logLineH = max(8, logMeasure:GetStringHeight())
+
+    -- свой скроллбар: высоты строк переменные, FauxScrollFrame (фикс. линия) не подходит.
+    -- OnValueChanged шаблона дёргает SetVerticalScroll родителя-скроллфрейма —
+    -- у нас родитель обычный Frame, поэтому скрипт переопределяем целиком.
+    logSlider = CreateFrame("Slider", "DTCCWin_LogScroll", logPage, "UIPanelScrollBarTemplate")
+    logSlider:SetOrientation("VERTICAL")
+    logSlider:SetWidth(16)
+    logSlider:SetPoint("TOPRIGHT", logPage, "TOPRIGHT", -10, -LOG_TOP)
+    logSlider:SetPoint("BOTTOMRIGHT", logPage, "BOTTOMRIGHT", -10, LOG_BOTTOM)
+    logSlider:SetMinMaxValues(0, 0)
+    logSlider:SetValue(0)
+    logSlider:SetValueStep(1)
+    logSlider:Hide()
+    logSlider:SetScript("OnValueChanged", function(self, value)
+        SetLogOffset(floor((tonumber(value) or 0) + 0.5))
+    end)
+
+    logPage:SetScript("OnMouseWheel", function(_, delta)
+        SetLogOffset(logOff - (delta > 0 and 2 or -2))
     end)
 
     logRows = {}
     for i = 1, ROW_POOL do
-        local row = MakeRow(logPage, {
-            { x = 4,   width = 80  },
-            { x = 90,  width = 120 },
-            { x = 216, width = 120 },
-            { x = 344, width = 246 },
-        })
-        row:SetPoint("TOPLEFT", logPage, "TOPLEFT", 6, -64 - (i - 1) * ROW_H)
-        row:SetPoint("RIGHT", logPage, "RIGHT", -30)
-        row:SetScript("OnEnter", LogTooltip)
-        row:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        row:SetScript("OnClick", function(self, mouse)
+        local row = CreateFrame("Frame", nil, logPage)
+        row:SetHeight(ROW_H)
+
+        -- левая часть строки (время + игрок): кнопка с подсветкой, тултипом и ПКМ-меню
+        local head = CreateFrame("Button", nil, row)
+        head:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+        head:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+        head:SetWidth(LOG_MSG_X - 4)
+        head:RegisterForClicks("RightButtonUp")
+        local hl = head:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+        hl:SetAllPoints(head)
+        hl:SetBlendMode("ADD")
+        head.timeF = head:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        head.timeF:SetPoint("TOPLEFT", head, "TOPLEFT", 4, -4)
+        head.timeF:SetWidth(LOG_TIME_W)
+        head.timeF:SetJustifyH("LEFT")
+        head.nameF = head:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        head.nameF:SetPoint("TOPLEFT", head, "TOPLEFT", LOG_TIME_W + 8, -4)
+        head.nameF:SetWidth(LOG_NAME_W)
+        head.nameF:SetJustifyH("LEFT")
+        head:SetScript("OnEnter", LogTooltip)
+        head:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        head:SetScript("OnClick", function(self, mouse)
             if mouse == "RightButton" and self.entry then
                 ShowMenu({ mode = "log", entry = self.entry })
             end
         end)
+        row.head = head
+
+        -- сообщение: ScrollingMessageFrame — ссылки предметов кликабельны,
+        -- длинный текст переносится по ширине колонки
+        local smf = CreateFrame("ScrollingMessageFrame", nil, row)
+        smf:SetPoint("TOPLEFT", row, "TOPLEFT", LOG_MSG_X, 0)
+        smf:SetWidth(200)
+        smf:SetHeight(ROW_H)
+        smf:EnableMouse(true)
+        smf:SetFading(false)
+        smf:SetMaxLines(1) -- одна запись на строку: AddMessage замещает прежнюю
+        smf:SetJustifyH("LEFT")
+        smf:SetFont(GameFontNormalSmall:GetFont())
+        smf:SetScript("OnHyperlinkClick", function(self, link, text, button)
+            SetItemRef(link, text, button, self)
+        end)
+        -- тултип при наведении на предмет: OnHyperlinkEnter появился после 3.3.5,
+        -- подключаем через pcall — старый клиент просто не будет его звать
+        pcall(smf.SetScript, smf, "OnHyperlinkEnter", function(self, link)
+            local kind = strsplit(":", tostring(link or ""))
+            if kind == "item" or kind == "enchant" or kind == "spell" or kind == "quest" then
+                GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+                GameTooltip:SetHyperlink(link)
+                GameTooltip:Show()
+            end
+        end)
+        pcall(smf.SetScript, smf, "OnHyperlinkLeave", function() GameTooltip:Hide() end)
+        smf:SetScript("OnMouseUp", function(self, button)
+            if button == "RightButton" and row.entry then
+                ShowMenu({ mode = "log", entry = row.entry })
+            end
+        end)
+        row.smf = smf
+
+        -- тонкая линия-разделитель внизу строки (многострочные записи читаются легче)
+        local sep = row:CreateTexture(nil, "BACKGROUND")
+        sep:SetTexture(0.25, 0.3, 0.35, 0.35)
+        sep:SetHeight(1)
+        sep:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 4, 0)
+        sep:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -28, 0)
+
+        row:Hide()
         logRows[i] = row
     end
 end
@@ -1054,7 +1305,6 @@ DTCC.SelectTab = SelectTab
 local function LayoutAllPages()
     BLLayout()
     FRLayout()
-    LogLayout()
     CNLayout()
 end
 
