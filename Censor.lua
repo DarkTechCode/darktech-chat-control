@@ -40,10 +40,11 @@ local function SplitWords(list)
     return out
 end
 
--- Сохранить новый список слов (массив строк, разделители: строка, запятая,
--- точка с запятой). Возвращает количество слов.
-function DTCC.Censor_SetWords(list)
-    if not DTCC.db then return 0 end
+-- Разобрать произвольный ввод в нормализованный список: разделители
+-- (строка/запятая/точка с запятой), тримминг, нижний регистр (кириллица
+-- учитывается), без повторов, по алфавиту. Без записи в настройки —
+-- используется кнопками форматирования редактора слов.
+function DTCC.Censor_NormalizeList(list)
     local clean, seen = {}, {}
     for _, raw in ipairs(SplitWords(list)) do
         local w = DTCC.utf8lower(strtrim(raw))
@@ -53,6 +54,14 @@ function DTCC.Censor_SetWords(list)
         end
     end
     table.sort(clean)
+    return clean
+end
+
+-- Сохранить новый список слов (массив строк или одна строка с разделителями:
+-- строка, запятая, точка с запятой). Возвращает количество слов.
+function DTCC.Censor_SetWords(list)
+    if not DTCC.db then return 0 end
+    local clean = DTCC.Censor_NormalizeList(list)
     DTCC.db.settings.censorWords = clean
     DTCC.RebuildCensorCache()
     return #clean

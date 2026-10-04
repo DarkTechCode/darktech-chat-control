@@ -6,9 +6,9 @@
       2. Друзья;
       3. Лог — поиск по тексту и игроку, фильтры по периоду и типу,
          действия над автором сообщения через ПКМ;
-      4. Цензура — редактор списка слов, режим, авто-ЧС и срок.
-
-    Внизу — поле отправки сообщения в мировой чат (.chat).
+      4. Цензура — редактор списка слов на всю вкладку (сохранённые слова
+         грузятся в поле при открытии, «Построчно»/«Через запятую»
+         переформатируют, «Сохранить» записывает), режим, авто-ЧС и срок.
 
     Окно растягивается за уголок в правом нижнем углу (SetResizable +
     StartSizing("BOTTOMRIGHT")); число видимых строк списков и ширина
@@ -829,48 +829,29 @@ end
 --------------------------------------------------------------------------------
 
 local cnPage, cnWordsEdit, cnWordsInfo, cnModeDD, cnDurDD, cnAutoBLCheck, cnEnabledCheck
-local cnQuickEdit, cnWordScroll, cnWordRows
-local cnWords           -- кэш списка слов (перерисовка при растягивании)
-local cnVisible = 8     -- видимых строк списка слов
+local cnFieldDirty   -- пользователь правил поле: не перезатирать при открытии вкладки
+local cnFilling      -- программный SetText тоже дёргает OnTextChanged — правкой не считать
 
-local CN_ROW_POOL = 24  -- пул строк списка слов (правая колонка)
-local CN_ROW_H = 18
-
-local function CNWordRender()
-    if not cnWordScroll or not cnWordRows or not DTCC.db then return end
-    cnWords = cnWords or {}
-    local off = ClampScroll(cnWordScroll, #cnWords, cnVisible, CN_ROW_H)
-    for i = 1, CN_ROW_POOL do
-        local row = cnWordRows[i]
-        local w = (i <= cnVisible) and cnWords[off + i] or nil
-        if w then
-            row.word = w
-            row:Show()
-            row.texts[1]:SetText(w)
-        else
-            row.word = nil
-            row:Hide()
-        end
-    end
-    FauxScrollFrame_Update(cnWordScroll, #cnWords, cnVisible, CN_ROW_H)
+-- Заполнить поле программно (не помечает его изменённым пользователем).
+local function CNFillField(text)
+    cnFilling = true
+    cnWordsEdit:SetText(text)
+    cnFilling = false
 end
 
-local function CNRefreshWords()
-    if not cnWordScroll or not cnWordRows or not DTCC.db then return end
-    cnWords = DTCC.Censor_GetWords()
-    CNWordRender()
-end
-
+-- Поле слов занимает всю вкладку под верхними контролами.
+-- -46: рамка (10 + 6 слева, 6 + 24 справа под скроллбар); -108: шапка (-90),
+-- нижняя кромка рамки и внутренние отступы скролл-фрейма.
 local function CNLayout()
-    if not cnPage or not cnWordRows then return end
-    cnVisible = RowsForHeight(cnPage:GetHeight(), 150, CN_ROW_H, CN_ROW_POOL)
-    local w = max(120, cnPage:GetWidth() - 404 - 40)
-    for i = 1, CN_ROW_POOL do
-        cnWordRows[i].texts[1]:SetWidth(w)
-    end
+    if not cnPage or not cnWordsEdit then return end
+    cnWordsEdit:SetWidth(max(120, cnPage:GetWidth() - 46))
+    cnWordsEdit:SetHeight(max(80, cnPage:GetHeight() - 108))
 end
 
-local function CNRefresh()
+-- refill=true — перечитать сохранённые слова в поле (открытие вкладки,
+-- сохранение); false — обновить только контролы (смена настроек — не затирать
+-- недопечатанный список).
+local function CNRefresh(refill)
     if not cnEnabledCheck or not DTCC.db then return end
     local s = DTCC.db.settings
     cnEnabledCheck:SetChecked(s.censorEnabled)
@@ -878,7 +859,9 @@ local function CNRefresh()
     cnModeDD.RefreshText()
     cnDurDD.RefreshText()
     cnWordsInfo:SetText("В списке слов: " .. #(s.censorWords or {}))
-    CNRefreshWords()
+    if refill and not cnFieldDirty then
+        CNFillField(DTCC.Censor_GetWordsAsString())
+    end
 end
 
 local function BuildCensorPage(parent)
@@ -931,17 +914,60 @@ local function BuildCensorPage(parent)
         130, "DTCCWin_CensorDur")
     cnDurDD:SetPoint("TOPLEFT", 342, -38)
 
-    ------------------------------------------------------------------ левая колонка: редактор
-    local wordsLabel = MakeLabel(cnPage, "Слова (по одному на строку или через запятую):", "GameFontNormalSmall")
-    wordsLabel:SetPoint("TOPLEFT", 10, -66)
+    ------------------------------------------------------------------ редактор слов (вся вкладка)
+    -- Метка и кнопки в одну строку, под ними — поле на всю ширину и высоту.
+    local wordsLabel = MakeLabel(cnPage, "Слова:", "GameFontNormalSmall")
+    wordsLabel:SetPoint("TOPLEFT", 10, -68)
 
-    -- Рамка-контейнер фиксированного размера. У многострочного EditBox в 3.3.5
-    -- видимая высота пляшет от содержимого (пустой — одна строка, кликом по
-    -- «пустому месту» не попасть), поэтому фон и клик-в-фокус держит контейнер.
+    -- Тултип кнопки (свой GameTooltip, как у грипа ресайза окна)
+    local function BtnTip(btn, title, text)
+        btn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+            GameTooltip:SetText(title, 0.95, 0.95, 0.95)
+            GameTooltip:AddLine(text, nil, nil, nil, 1)
+            GameTooltip:Show()
+        end)
+        btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+
+    local saveBtn = MakeButton(cnPage, "Сохранить", 100, function()
+        local n = DTCC.Censor_SetWords({ cnWordsEdit:GetText() })
+        cnFieldDirty = false
+        cnWordsInfo:SetText("В списке слов: " .. n)
+        DTCC.Print("список слов цензуры сохранён (" .. n .. " шт.).")
+        CNFillField(DTCC.Censor_GetWordsAsString())
+    end, "DTCCWin_WordsSave")
+    saveBtn:SetPoint("TOPLEFT", 62, -66)
+    BtnTip(saveBtn, "Сохранить список слов",
+        "Разделители: новая строка, запятая или точка с запятой.\n" ..
+        "Регистр не важен (кириллица тоже), повторы убираются, список сортируется.")
+
+    local linesBtn = MakeButton(cnPage, "Построчно", 95, function()
+        CNFillField(table.concat(DTCC.Censor_NormalizeList({ cnWordsEdit:GetText() }), "\n"))
+    end, "DTCCWin_WordsLines")
+    linesBtn:SetPoint("LEFT", saveBtn, "RIGHT", 6, 0)
+    BtnTip(linesBtn, "Формат: по одному слову на строку",
+        "Переформатировать содержимое поля: по алфавиту, без повторов.\n" ..
+        "Список не меняется, пока не нажать «Сохранить».")
+
+    local commaBtn = MakeButton(cnPage, "Через запятую", 115, function()
+        CNFillField(table.concat(DTCC.Censor_NormalizeList({ cnWordsEdit:GetText() }), ", "))
+    end, "DTCCWin_WordsComma")
+    commaBtn:SetPoint("LEFT", linesBtn, "RIGHT", 6, 0)
+    BtnTip(commaBtn, "Формат: слова через запятую",
+        "Переформатировать содержимое поля: по алфавиту, без повторов.\n" ..
+        "Список не меняется, пока не нажать «Сохранить».")
+
+    cnWordsInfo = MakeLabel(cnPage, "", "GameFontNormalSmall")
+    cnWordsInfo:SetTextColor(0.6, 0.6, 0.6)
+    cnWordsInfo:SetPoint("LEFT", commaBtn, "RIGHT", 12, 0)
+
+    -- Рамка-контейнер на всю вкладку. У многострочного EditBox в 3.3.5 видимая
+    -- высота пляшет от содержимого (пустой — одна строка, кликом по «пустому
+    -- месту» не попасть), поэтому фон и клик-в-фокус держит контейнер.
     local wordsBox = CreateFrame("Frame", nil, cnPage)
-    wordsBox:SetWidth(380)
-    wordsBox:SetHeight(150)
-    wordsBox:SetPoint("TOPLEFT", 10, -82)
+    wordsBox:SetPoint("TOPLEFT", 10, -90)
+    wordsBox:SetPoint("BOTTOMRIGHT", -6, 6)
     wordsBox:EnableMouse(true)
     wordsBox:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -953,6 +979,15 @@ local function BuildCensorPage(parent)
     wordsBox:SetScript("OnMouseDown", function()
         if cnWordsEdit then cnWordsEdit:SetFocus() end
     end)
+    wordsBox:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOPRIGHT")
+        GameTooltip:SetText("Слова цензуры", 0.95, 0.95, 0.95)
+        GameTooltip:AddLine("Совпадения ищутся подстрокой, без учёта регистра " ..
+            "(кириллица и Ё/ё учитываются): слово «нос» найдётся и внутри других слов.",
+            nil, nil, nil, 1)
+        GameTooltip:Show()
+    end)
+    wordsBox:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     local wordsScroll = CreateFrame("ScrollFrame", "DTCCWin_WordsScroll", wordsBox, "UIPanelScrollFrameTemplate")
     wordsScroll:SetPoint("TOPLEFT", 6, -6)
@@ -960,11 +995,13 @@ local function BuildCensorPage(parent)
 
     cnWordsEdit = CreateFrame("EditBox", "DTCCWin_WordsEdit", wordsScroll)
     cnWordsEdit:SetMultiLine(true)
-    cnWordsEdit:SetWidth(344)
-    cnWordsEdit:SetHeight(138)
     cnWordsEdit:SetAutoFocus(false)
     cnWordsEdit:SetFontObject("GameFontHighlightSmall")
     cnWordsEdit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    -- правка поля пользователем: до «Сохранить» открытие вкладки поле не затирает
+    cnWordsEdit:SetScript("OnTextChanged", function()
+        if not cnFilling then cnFieldDirty = true end
+    end)
     wordsScroll:SetScrollChild(cnWordsEdit)
     -- прокрутка редактора за курсором (иначе длинные списки печатаются «вслепую»)
     cnWordsEdit:SetScript("OnCursorChanged", function(self, x, y, w, h)
@@ -978,88 +1015,8 @@ local function BuildCensorPage(parent)
         end
     end)
 
-    local applyBtn = MakeButton(cnPage, "Применить", 110, function()
-        local lines = { strsplit("\n", cnWordsEdit:GetText()) }
-        local n = DTCC.Censor_SetWords(lines)
-        cnWordsInfo:SetText("В списке слов: " .. n)
-        DTCC.Print("список слов цензуры сохранён (" .. n .. " шт.).")
-        CNRefresh()
-    end, "DTCCWin_WordsApply")
-    applyBtn:SetPoint("TOPLEFT", 10, -244)
-
-    local reloadBtn = MakeButton(cnPage, "Обновить поле", 120, function()
-        cnWordsEdit:SetText(DTCC.Censor_GetWordsAsString())
-        CNRefresh()
-    end)
-    reloadBtn:SetPoint("LEFT", applyBtn, "RIGHT", 8, 0)
-
-    cnWordsInfo = MakeLabel(cnPage, "", "GameFontNormalSmall")
-    cnWordsInfo:SetTextColor(0.6, 0.6, 0.6)
-    cnWordsInfo:SetPoint("LEFT", reloadBtn, "RIGHT", 12, 0)
-
-    local hint = MakeLabel(cnPage, "Совпадения ищутся подстрокой, без учёта регистра (кириллица и Ё/ё учитываются).", "GameFontNormalSmall")
-    hint:SetTextColor(0.5, 0.5, 0.5)
-    hint:SetPoint("TOPLEFT", 10, -276)
-    hint:SetWidth(380)
-    hint:SetJustifyH("LEFT")
-
-    ------------------------------------------------------------------ правая колонка: быстрое управление
-    local function QuickAddWord()
-        local raw = strtrim(cnQuickEdit:GetText() or "")
-        if raw == "" then return end
-        if DTCC.CensorWords_Add(raw) then
-            cnQuickEdit:SetText("")
-            DTCC.Print("слово добавлено в список цензуры.")
-        else
-            DTCC.Print(DTCC.COLORS.yellow .. "не добавлено: пусто или уже есть в списке.")
-        end
-        CNRefresh()
-    end
-
-    local qLabel = MakeLabel(cnPage, "Быстрое добавление:", "GameFontNormalSmall")
-    qLabel:SetPoint("TOPLEFT", 404, -66)
-
-    cnQuickEdit = MakeEdit(cnPage, 140, function() QuickAddWord() end, "DTCCWin_WordQuickEdit")
-    cnQuickEdit:SetPoint("TOPLEFT", 404, -80)
-
-    local qAddBtn = MakeButton(cnPage, "Добавить", 80, QuickAddWord, "DTCCWin_WordQuickAdd")
-    qAddBtn:SetPoint("TOPLEFT", 548, -82)
-
-    local listLabel = MakeLabel(cnPage, "Слова в списке (клик — удалить):", "GameFontNormalSmall")
-    listLabel:SetPoint("TOPLEFT", 404, -126)
-
-    -- список сдвинут вниз (не залезает под поле быстрого добавления и скроллбар
-    -- с его стрелками), строки укорочены, чтобы не уходили под скроллбар
-    cnWordScroll = CreateFrame("ScrollFrame", "DTCCWin_CWordsScroll", cnPage, "FauxScrollFrameTemplate")
-    cnWordScroll:SetPoint("TOPLEFT", 398, -144)
-    cnWordScroll:SetPoint("BOTTOMRIGHT", -6, 6)
-    cnWordScroll:SetScript("OnVerticalScroll", function(self, offset)
-        FauxScrollFrame_OnVerticalScroll(self, offset, 18, CNRefreshWords)
-    end)
-
-    cnWordRows = {}
-    for i = 1, CN_ROW_POOL do
-        local row = MakeRow(cnPage, { { x = 6, width = 182 } })
-        row:SetHeight(18)
-        row:SetPoint("TOPLEFT", cnPage, "TOPLEFT", 404, -144 - (i - 1) * 18)
-        row:SetPoint("RIGHT", cnPage, "RIGHT", -34)
-        row:SetScript("OnClick", function(self, mouse)
-            if self.word then
-                DTCC.UI.PopupMenu({
-                    {
-                        text = "Удалить слово «" .. self.word .. "»",
-                        func = function()
-                            if DTCC.CensorWords_Remove(self.word) then
-                                DTCC.Print("слово удалено из списка цензуры.")
-                            end
-                            CNRefresh()
-                        end,
-                    },
-                }, self)
-            end
-        end)
-        cnWordRows[i] = row
-    end
+    CNLayout()      -- первичный размер поля под текущую вкладку
+    CNRefresh(true) -- сохранённые слова грузятся в поле сразу
 end
 
 --------------------------------------------------------------------------------
@@ -1087,7 +1044,7 @@ local function SelectTab(id)
     if id == 1 then BLRefresh() end
     if id == 2 then FRRefresh() end
     if id == 3 then LogRefresh() end
-    if id == 4 then CNRefresh() end
+    if id == 4 then CNRefresh(true) end
 end
 DTCC.SelectTab = SelectTab
 
@@ -1258,7 +1215,8 @@ local function BuildWindow()
 
     -- реакция на изменение размера: раскладка вкладок и перерисовка строк
     -- АКТИВНОЙ вкладки из кэша (поиск по всему логу на каждый пиксель
-    -- растягивания давал бы фризы)
+    -- растягивания давал бы фризы). Вкладке цензуры перерисовка из кэша не
+    -- нужна — её поле растягивает CNLayout через LayoutAllPages.
     window:SetScript("OnSizeChanged", function(self, w, h)
         LayoutAllPages()
         if currentTab == 1 then
@@ -1267,8 +1225,6 @@ local function BuildWindow()
             FRRender()
         elseif currentTab == 3 then
             LogRender()
-        elseif currentTab == 4 then
-            CNWordRender()
         end
     end)
 

@@ -83,11 +83,11 @@ README.md — пользовательская документация (не з
 | Core.lua | неймспейс, цвета, UTF-8 (`utf8lower`, `Truncate`, `NameKey`, `CleanName`), время/сроки (`DTCC.DURATIONS`, `FormatRemaining`), шина событий, `DEFAULTS` + `CopyDefaults`, слэш `/dtcc` (`/dcc`), ADDON_LOADED/PLAYER_LOGIN |
 | Widgets.lua | `DTCC.UI`: `PopupMenu`/`CloseMenu` (меню + ловец), `CreateDropdown(parent, items, get, set, width, name, tooltip)`, `Check`. Свои, не Blizzard |
 | Lists.lua | ЧС: `Blacklist_Add/Remove/Get/MakePermanent/PurgeExpired/GetSorted(sortKey, sortDir)` (ключи `name\|added\|expires\|reason` × `asc\|desc`; `expires=nil` = math.huge — бессрочные в конце при возр.). Друзья: `Friends_*` |
-| Censor.lua | слова: `Censor_SetWords/Add/Remove` (разделители `, ; \n`, нормализация), кэш, `CensorFind`, `CensorMask` (звёзды по СИМВОЛАМ, не байтам) |
+| Censor.lua | слова: `Censor_SetWords/NormalizeList/Add/Remove` (разделители `, ; \n`, нормализация: utf8lower+тримминг+дедуп+сортировка; NormalizeList — без записи, для кнопок форматирования), кэш, `CensorFind`, `CensorMask` (звёзды по СИМВОЛАМ, не байтам) |
 | Capture.lua | 3-уровневый парсер (strict mod-world-chat → tolerant → RAW), `ParseWorldMessage`, `LogAdd/LogSearch/ClearLog`, `SendWorldMessage` (`.chat` через SAY), фильтры CHAT_MSG_SYSTEM/CHANNEL, конвейер `ProcessChatLine` |
 | Alerts.lua | `DTCC.SOUNDS`, пул попапов, `FireProximityAlert`, детект (mouseover/target/focus/say/yell/emote) |
 | Options.lua | панель Interface Options (`NewCheck/NewDropdown/NewButton/NewEdit/NewSection`, `Refresh` по SettingsChanged, StaticPopup-диалоги очистки лога/сброса) |
-| Window.lua | окно: вкладки ЧС (сортировка по заголовкам + колонка «Добавлен»), Друзья, Лог, Цензура; контекстное меню `MenuDescriptor` (режимы `bl/friend/log`). Окно растягивается за грип `DTCCWindowResizeGrip` (`SetResizable` + `StartSizing("BOTTOMRIGHT")`, на время растягивания `SetClampedToScreen(false)`): по вкладкам тройка `XXLayout` (число видимых строк + ширина последней колонки) → `XXRender` (из кэша — вызывается на каждый `OnSizeChanged` во время растягивания, полные поиск/сортировка там нельзя — фризы) → `XXRefresh` (полный пересчёт). Пул строк `ROW_POOL` (32) / `CN_ROW_POOL` (24), offset подрезает `ClampScroll`, текст в колонки укладывает `FitText`. Размер/позиция — `settings.winW/winH/winX/winY` |
+| Window.lua | окно: вкладки ЧС (сортировка по заголовкам + колонка «Добавлен»), Друзья, Лог, Цензура (единственный редактор слов на всю вкладку: `CNRefresh(true)` при открытии грузит слова в поле, `cnFieldDirty` защищает недопечатанное от затирания, `CNLayout` растягивает EditBox под вкладку); контекстное меню `MenuDescriptor` (режимы `bl/friend/log`). Окно растягивается за грип `DTCCWindowResizeGrip` (`SetResizable` + `StartSizing("BOTTOMRIGHT")`, на время растягивания `SetClampedToScreen(false)`): по вкладкам-спискам тройка `XXLayout` (число видимых строк + ширина последней колонки) → `XXRender` (из кэша — вызывается на каждый `OnSizeChanged` во время растягивания, полные поиск/сортировка там нельзя — фризы) → `XXRefresh` (полный пересчёт). Пул строк `ROW_POOL` (32), offset подрезает `ClampScroll`, текст в колонки укладывает `FitText`. Размер/позиция — `settings.winW/winH/winX/winY` |
 | Minimap.lua | кнопка миникарты (`RegisterForDrag`, защита от коллекторов DragonUI) |
 
 Порядок конвейера в `ProcessChatLine` (менять осторожно): флаги списков →
@@ -135,6 +135,13 @@ README.md — пользовательская документация (не з
 
 ## Текущее состояние (обновляй при релизе)
 
+- **v1.4.1 (2026-10-04)**: вкладка «Цензура» — один редактор слов на всю
+  вкладку (грузится из сохранённых при открытии; «Применить»/«Обновить» →
+  «Сохранить» + «Построчно»/«Через запятую» через `Censor_NormalizeList` без
+  записи; блоки «Быстрое добавление»/«Слова в списке» удалены). Нижняя панель
+  отправки в окне убрана (осталась команда `/dtcc send`), строка статистики
+  убрана. UI-тесты: загрузка поля, нормализация при сохранении, обе кнопки
+  формата, растягивание поля с окном.
 - **v1.4.0 (2026-10-04)**: окно растягивается за уголок (правый нижний,
   `DTCCWindowResizeGrip`): число видимых строк списков и ширина последних
   колонок адаптируются (`Layout/Render/Refresh`-тройка на вкладку, пул строк),
