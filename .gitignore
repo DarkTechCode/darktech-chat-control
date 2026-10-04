@@ -1,0 +1,7 @@
+# Мусор, не относящийся к коду аддона
+*.bak
+*.orig
+*~
+Thumbs.db
+Desktop.ini
+.DS_Store
