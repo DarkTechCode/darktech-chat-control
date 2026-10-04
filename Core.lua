@@ -251,6 +251,8 @@ local DEFAULTS = {
 
         winX            = nil,
         winY            = nil,
+        winW            = 660,    -- размер главного окна (мин. 660x450,
+        winH            = 450,    -- растягивается за нижний правый угол)
     },
     blacklist = {}, -- [ключ] = { name, added, expires|nil, reason|nil, source }
     friends   = {}, -- [ключ] = { name, added }

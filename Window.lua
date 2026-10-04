@@ -10,12 +10,20 @@
 
     Внизу — поле отправки сообщения в мировой чат (.chat).
 
+    Окно растягивается за уголок в правом нижнем углу (SetResizable +
+    StartSizing("BOTTOMRIGHT")); число видимых строк списков и ширина
+    последних колонок подстраиваются под размер (пул строк ROW_POOL),
+    размер и положение сохраняются в настройках (winW/winH/winX/winY).
+
     Все выпадающие списки и контекстные меню — собственные (Widgets.lua),
     без UIDropDownMenu.
 ]]
 
 local ROW_H = 24
-local MAX_ROWS = 10
+local ROW_POOL = 32   -- пул строк списков: окно растягивается, видно больше 10
+
+local WIN_MIN_W = 660 -- минимальный размер окна (= исходный фиксированный,
+local WIN_MIN_H = 450 -- меньше него верхние панели вкладок не помещаются)
 
 local window
 local tabs = {}
@@ -84,6 +92,43 @@ local function MakeRow(parent, cols)
         row.texts[i] = fs
     end
     return row
+end
+
+-- Уместить текст в колонку: сначала грубо по числу символов, затем (если
+-- фактическая ширина вылезает — кириллица шире латиницы) ужимаем дальше.
+-- Меняет текст fontstring'а, добавляет «…» при усечении.
+local function FitText(fs, text, budget)
+    text = tostring(text or "")
+    local t = DTCC.Truncate(text, budget)
+    if #t < #text then t = t .. "…" end
+    fs:SetText(t)
+    while fs:GetStringWidth() > fs:GetWidth() and budget > 8 do
+        budget = floor(budget * 0.85)
+        t = DTCC.Truncate(text, budget)
+        if #t < #text then t = t .. "…" end
+        fs:SetText(t)
+    end
+end
+
+-- Держать offset скролла в допустимых пределах. Число видимых строк меняется
+-- с размером окна, а FauxScrollFrame_Update сам offset не подрезает.
+local function ClampScroll(scroll, numItems, visible, lineH)
+    local maxOff = max(0, numItems - visible)
+    local off = FauxScrollFrame_GetOffset(scroll) or 0
+    if off > maxOff then
+        off = maxOff
+        scroll.offset = off
+        local sb = scroll:GetName() and _G[scroll:GetName() .. "ScrollBar"]
+        if sb and sb.SetValue then sb:SetValue(off * lineH) end
+    end
+    return off
+end
+
+-- Сколько строк высотой lineH влезает в страницу высоты h
+-- (topPad — верхний отступ списка + нижнее поле)
+local function RowsForHeight(h, topPad, lineH, poolMax)
+    local n = floor((h - topPad) / lineH)
+    return min(max(n, 1), poolMax)
 end
 
 --------------------------------------------------------------------------------
@@ -221,17 +266,18 @@ end
 local blPage, blScroll, blRows, blItems, blDurationDD, blNameEdit, blCount
 local blHeaders = {}
 local blSortKey, blSortDir = "added", "desc"
+local blVisible = 10  -- видимых строк (зависит от высоты окна)
+local blBudget = 34   -- бюджет символов колонки «Причина» (от ширины окна)
 
-local function BLRefresh()
-    if not window or not window:IsShown() or currentTab ~= 1 then return end
+-- Перерисовать строки из кэша blItems (без сортировки). Вызывается и во
+-- время растягивания окна: сортировка/поиск там не нужны — только скорость.
+local function BLRender()
     if not blScroll or not blRows then return end
-    blItems = DTCC.Blacklist_GetSorted(blSortKey, blSortDir)
-    blCount:SetText("Записей: " .. #blItems)
-
-    local offset = FauxScrollFrame_GetOffset(blScroll)
-    for i = 1, MAX_ROWS do
+    blItems = blItems or {}
+    local off = ClampScroll(blScroll, #blItems, blVisible, ROW_H)
+    for i = 1, ROW_POOL do
         local row = blRows[i]
-        local item = blItems[offset + i]
+        local item = (i <= blVisible) and blItems[off + i] or nil
         if item then
             row.entry = item
             row:Show()
@@ -257,9 +303,7 @@ local function BLRefresh()
                 row.texts[4]:SetText("—")
                 row.texts[4]:SetTextColor(0.45, 0.45, 0.45)
             else
-                local tr = DTCC.Truncate(reason, 34)
-                if #tr < #reason then tr = tr .. "…" end
-                row.texts[4]:SetText(tr)
+                FitText(row.texts[4], reason, blBudget)
                 row.texts[4]:SetTextColor(0.75, 0.75, 0.75)
             end
         else
@@ -267,7 +311,29 @@ local function BLRefresh()
             row:Hide()
         end
     end
-    FauxScrollFrame_Update(blScroll, #blItems, MAX_ROWS, ROW_H)
+    FauxScrollFrame_Update(blScroll, #blItems, blVisible, ROW_H)
+end
+
+local function BLRefresh()
+    if not window or not window:IsShown() or currentTab ~= 1 then return end
+    if not blScroll or not blRows then return end
+    blItems = DTCC.Blacklist_GetSorted(blSortKey, blSortDir)
+    blCount:SetText("Записей: " .. #blItems)
+    BLRender()
+end
+
+-- Подгонка под размер окна: сколько строк видно + ширина последней колонки
+-- («Причина») и её заголовка. Работает и для скрытой страницы — якоря живут.
+local function BLLayout()
+    if not blPage or not blRows or not blHeaders[4] then return end
+    blVisible = RowsForHeight(blPage:GetHeight(), 72, ROW_H, ROW_POOL)
+    local w = blPage:GetWidth()
+    local lastW = max(80, w - 312 - 46)
+    blBudget = max(10, floor(lastW / 6))
+    blHeaders[4]:SetWidth(max(80, w - 320 - 40))
+    for i = 1, ROW_POOL do
+        blRows[i].texts[4]:SetWidth(lastW)
+    end
 end
 
 -- Перерисовать заголовки таблицы: у активного столбца — стрелка направления
@@ -342,7 +408,7 @@ end
 local blDurationValue = 0
 
 local function BuildBLPage(parent)
-    blPage = CreateFrame("Frame", nil, parent)
+    blPage = CreateFrame("Frame", "DTCCWin_BLPage", parent)
     blPage:SetAllPoints()
     pages[1] = blPage
 
@@ -405,7 +471,7 @@ local function BuildBLPage(parent)
     end)
 
     blRows = {}
-    for i = 1, MAX_ROWS do
+    for i = 1, ROW_POOL do
         local row = MakeRow(blPage, {
             { x = 8,   width = 114 },
             { x = 130, width = 94  },
@@ -445,16 +511,15 @@ end
 --------------------------------------------------------------------------------
 
 local frPage, frScroll, frRows, frItems, frNameEdit
+local frVisible = 10
 
-local function FRRefresh()
-    if not window or not window:IsShown() or currentTab ~= 2 then return end
+local function FRRender()
     if not frScroll or not frRows then return end
-    frItems = DTCC.Friends_GetSorted()
-
-    local offset = FauxScrollFrame_GetOffset(frScroll)
-    for i = 1, MAX_ROWS do
+    frItems = frItems or {}
+    local off = ClampScroll(frScroll, #frItems, frVisible, ROW_H)
+    for i = 1, ROW_POOL do
         local row = frRows[i]
-        local item = frItems[offset + i]
+        local item = (i <= frVisible) and frItems[off + i] or nil
         if item then
             row.entry = item
             row:Show()
@@ -467,11 +532,23 @@ local function FRRefresh()
             row:Hide()
         end
     end
-    FauxScrollFrame_Update(frScroll, #frItems, MAX_ROWS, ROW_H)
+    FauxScrollFrame_Update(frScroll, #frItems, frVisible, ROW_H)
+end
+
+local function FRRefresh()
+    if not window or not window:IsShown() or currentTab ~= 2 then return end
+    if not frScroll or not frRows then return end
+    frItems = DTCC.Friends_GetSorted()
+    FRRender()
+end
+
+local function FRLayout()
+    if not frPage or not frRows then return end
+    frVisible = RowsForHeight(frPage:GetHeight(), 72, ROW_H, ROW_POOL)
 end
 
 local function BuildFriendsPage(parent)
-    frPage = CreateFrame("Frame", nil, parent)
+    frPage = CreateFrame("Frame", "DTCCWin_FRPage", parent)
     frPage:SetAllPoints()
     pages[2] = frPage
 
@@ -507,7 +584,7 @@ local function BuildFriendsPage(parent)
     end)
 
     frRows = {}
-    for i = 1, MAX_ROWS do
+    for i = 1, ROW_POOL do
         local row = MakeRow(frPage, {
             { x = 8,   width = 150 },
             { x = 165, width = 220 },
@@ -531,6 +608,8 @@ local logPage, logScroll, logRows, logItems
 local logTextEdit, logNameEdit, logPeriodDD, logTypeDD, logCountLabel
 local logPeriodValue, logTypeValue = 0, 0
 local logTotal = 0
+local logVisible = 10  -- видимых строк (зависит от высоты окна)
+local logBudget = 44   -- бюджет символов колонки «Сообщение» (от ширины)
 
 local PERIODS = {
     { text = "Всё время",   value = 0     },
@@ -594,6 +673,39 @@ local function LogSearch()
     logTotal = total
 end
 
+-- Перерисовать строки из кэша logItems (без поиска по всему логу — поиск
+-- тяжёлый и во время растягивания окна вызывал бы фризы)
+local function LogRender()
+    if not logScroll or not logRows then return end
+    logItems = logItems or {}
+    local off = ClampScroll(logScroll, #logItems, logVisible, ROW_H)
+    for i = 1, ROW_POOL do
+        local row = logRows[i]
+        local e = (i <= logVisible) and logItems[off + i] or nil
+        if e then
+            row.entry = e
+            row:Show()
+            row.texts[1]:SetText(DTCC.FormatTimeShort(e.t))
+            row.texts[1]:SetTextColor(0.55, 0.55, 0.55)
+            row.texts[2]:SetText(e.p)
+            if DTCC.Blacklist_Get(e.p) then
+                row.texts[2]:SetTextColor(1, 0.35, 0.35)
+            elseif DTCC.Friends_Get(e.p) then
+                row.texts[2]:SetTextColor(0.4, 1, 0.4)
+            else
+                row.texts[2]:SetTextColor(0.85, 0.9, 1)
+            end
+            row.texts[3]:SetText(LogTags(e.f or 0))
+            FitText(row.texts[4], e.m, logBudget)
+            row.texts[4]:SetTextColor(0.9, 0.9, 0.9)
+        else
+            row.entry = nil
+            row:Hide()
+        end
+    end
+    FauxScrollFrame_Update(logScroll, #logItems, logVisible, ROW_H)
+end
+
 local function LogRefresh()
     if not window or not window:IsShown() or currentTab ~= 3 then return end
     if not logScroll or not logRows or not logTextEdit then return end
@@ -610,35 +722,17 @@ local function LogRefresh()
         logCountLabel:SetText("Найдено: " .. logTotal .. " / в логе: " .. inLog)
     end
 
-    local offset = FauxScrollFrame_GetOffset(logScroll)
-    for i = 1, MAX_ROWS do
-        local row = logRows[i]
-        local e = logItems[offset + i]
-        if e then
-            row.entry = e
-            row:Show()
-            row.texts[1]:SetText(DTCC.FormatTimeShort(e.t))
-            row.texts[1]:SetTextColor(0.55, 0.55, 0.55)
-            row.texts[2]:SetText(e.p)
-            if DTCC.Blacklist_Get(e.p) then
-                row.texts[2]:SetTextColor(1, 0.35, 0.35)
-            elseif DTCC.Friends_Get(e.p) then
-                row.texts[2]:SetTextColor(0.4, 1, 0.4)
-            else
-                row.texts[2]:SetTextColor(0.85, 0.9, 1)
-            end
-            row.texts[3]:SetText(LogTags(e.f or 0))
-            local msg = tostring(e.m or "")
-            local tr = DTCC.Truncate(msg, 44)
-            if #tr < #msg then tr = tr .. "…" end
-            row.texts[4]:SetText(tr)
-            row.texts[4]:SetTextColor(0.9, 0.9, 0.9)
-        else
-            row.entry = nil
-            row:Hide()
-        end
+    LogRender()
+end
+
+local function LogLayout()
+    if not logPage or not logRows then return end
+    logVisible = RowsForHeight(logPage:GetHeight(), 72, ROW_H, ROW_POOL)
+    local lastW = max(80, logPage:GetWidth() - 344 - 46)
+    logBudget = max(10, floor(lastW / 6))
+    for i = 1, ROW_POOL do
+        logRows[i].texts[4]:SetWidth(lastW)
     end
-    FauxScrollFrame_Update(logScroll, #logItems, MAX_ROWS, ROW_H)
 end
 
 local function LogTooltip(row)
@@ -663,7 +757,7 @@ local function LogTooltip(row)
 end
 
 local function BuildLogPage(parent)
-    logPage = CreateFrame("Frame", nil, parent)
+    logPage = CreateFrame("Frame", "DTCCWin_LogPage", parent)
     logPage:SetAllPoints()
     pages[3] = logPage
 
@@ -710,7 +804,7 @@ local function BuildLogPage(parent)
     end)
 
     logRows = {}
-    for i = 1, MAX_ROWS do
+    for i = 1, ROW_POOL do
         local row = MakeRow(logPage, {
             { x = 4,   width = 80  },
             { x = 90,  width = 120 },
@@ -736,16 +830,19 @@ end
 
 local cnPage, cnWordsEdit, cnWordsInfo, cnModeDD, cnDurDD, cnAutoBLCheck, cnEnabledCheck
 local cnQuickEdit, cnWordScroll, cnWordRows
+local cnWords           -- кэш списка слов (перерисовка при растягивании)
+local cnVisible = 8     -- видимых строк списка слов
 
-local CN_MAX_WORDS = 8
+local CN_ROW_POOL = 24  -- пул строк списка слов (правая колонка)
+local CN_ROW_H = 18
 
-local function CNRefreshWords()
+local function CNWordRender()
     if not cnWordScroll or not cnWordRows or not DTCC.db then return end
-    local words = DTCC.Censor_GetWords()
-    local offset = FauxScrollFrame_GetOffset(cnWordScroll)
-    for i = 1, CN_MAX_WORDS do
+    cnWords = cnWords or {}
+    local off = ClampScroll(cnWordScroll, #cnWords, cnVisible, CN_ROW_H)
+    for i = 1, CN_ROW_POOL do
         local row = cnWordRows[i]
-        local w = words[offset + i]
+        local w = (i <= cnVisible) and cnWords[off + i] or nil
         if w then
             row.word = w
             row:Show()
@@ -755,7 +852,22 @@ local function CNRefreshWords()
             row:Hide()
         end
     end
-    FauxScrollFrame_Update(cnWordScroll, #words, CN_MAX_WORDS, 18)
+    FauxScrollFrame_Update(cnWordScroll, #cnWords, cnVisible, CN_ROW_H)
+end
+
+local function CNRefreshWords()
+    if not cnWordScroll or not cnWordRows or not DTCC.db then return end
+    cnWords = DTCC.Censor_GetWords()
+    CNWordRender()
+end
+
+local function CNLayout()
+    if not cnPage or not cnWordRows then return end
+    cnVisible = RowsForHeight(cnPage:GetHeight(), 150, CN_ROW_H, CN_ROW_POOL)
+    local w = max(120, cnPage:GetWidth() - 404 - 40)
+    for i = 1, CN_ROW_POOL do
+        cnWordRows[i].texts[1]:SetWidth(w)
+    end
 end
 
 local function CNRefresh()
@@ -770,7 +882,7 @@ local function CNRefresh()
 end
 
 local function BuildCensorPage(parent)
-    cnPage = CreateFrame("Frame", nil, parent)
+    cnPage = CreateFrame("Frame", "DTCCWin_CNPage", parent)
     cnPage:SetAllPoints()
     pages[4] = cnPage
 
@@ -926,7 +1038,7 @@ local function BuildCensorPage(parent)
     end)
 
     cnWordRows = {}
-    for i = 1, CN_MAX_WORDS do
+    for i = 1, CN_ROW_POOL do
         local row = MakeRow(cnPage, { { x = 6, width = 182 } })
         row:SetHeight(18)
         row:SetPoint("TOPLEFT", cnPage, "TOPLEFT", 404, -144 - (i - 1) * 18)
@@ -987,15 +1099,28 @@ local function UpdateStatus()
     window.status:SetText(string.format("ЧС: %d   •   Друзей: %d   •   Записей в логе: %d", bl, fr, lg))
 end
 
+-- Пересчёт всех вкладок под текущий размер окна. Скрытые страницы тоже:
+-- раскладка по якорям работает и у скрытых фреймов, а при переключении
+-- вкладки рефреш уже попадёт на готовую раскладку.
+local function LayoutAllPages()
+    BLLayout()
+    FRLayout()
+    LogLayout()
+    CNLayout()
+end
+
 local function BuildWindow()
     window = CreateFrame("Frame", "DTCCWindow", UIParent)
     DTCC.mainWindow = window
-    window:SetWidth(660)
-    window:SetHeight(450)
+    window:SetWidth(WIN_MIN_W)
+    window:SetHeight(WIN_MIN_H)
     window:SetMovable(true)
+    window:SetResizable(true)
     window:EnableMouse(true)
     window:SetClampedToScreen(true)
     window:SetFrameStrata("HIGH")
+    window:SetMinResize(WIN_MIN_W, WIN_MIN_H)
+    window:SetMaxResize(UIParent:GetWidth(), UIParent:GetHeight())
     tinsert(UISpecialFrames, "DTCCWindow")
     window:SetBackdrop({
         bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -1005,13 +1130,28 @@ local function BuildWindow()
     })
     window:SetPoint("CENTER")
 
+    -- пред-объявление: OnSizeChanged ниже ссылается на sendEdit, без этого
+    -- замыкание в Lua 5.1 увидело бы ГЛОБАЛ sendEdit (nil)
+    local sendEdit
+
+    local function SaveWindowGeometry()
+        if not DTCC.db then return end
+        DTCC.db.settings.winX = window:GetLeft()
+        DTCC.db.settings.winY = window:GetTop()
+        DTCC.db.settings.winW = window:GetWidth()
+        DTCC.db.settings.winH = window:GetHeight()
+    end
+
     window:SetScript("OnMouseDown", function(self) self:StartMoving() end)
     window:SetScript("OnMouseUp", function(self)
         self:StopMovingOrSizing()
-        if DTCC.db then
-            DTCC.db.settings.winX = self:GetLeft()
-            DTCC.db.settings.winY = self:GetTop()
-        end
+        SaveWindowGeometry()
+    end)
+    -- окно спрятали (ESC) в момент перетаскивания/растягивания — остановить
+    -- и вернуть прижатие к экрану (грип выключает его на время растягивания)
+    window:SetScript("OnHide", function(self)
+        self:StopMovingOrSizing()
+        self:SetClampedToScreen(true)
     end)
 
     local title = window:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
@@ -1025,6 +1165,47 @@ local function BuildWindow()
 
     local closeBtn = CreateFrame("Button", nil, window, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", -8, -8)
+
+    -- уголок растягивания: тянуть за нижний правый угол окна
+    local grip = CreateFrame("Button", "DTCCWindowResizeGrip", window)
+    grip:SetWidth(16)
+    grip:SetHeight(16)
+    grip:SetPoint("BOTTOMRIGHT", -5, 5)
+    -- фон под грипом: даже если текстура уголка не подгрузится, он остаётся
+    -- видимым и кликабельным
+    grip:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        tile = true, tileSize = 16,
+    })
+    grip:SetBackdropColor(0, 0, 0, 0.6)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetScript("OnEnter", function(self)
+        self:SetBackdropColor(0, 0.45, 0.55, 0.8)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:SetText("Изменить размер окна", 0.95, 0.95, 0.95)
+        GameTooltip:AddLine("Потяните за угол и отпустите. Размер и положение окна сохраняются.", nil, nil, nil, 1)
+        GameTooltip:Show()
+    end)
+    grip:SetScript("OnLeave", function(self)
+        self:SetBackdropColor(0, 0, 0, 0.6)
+        GameTooltip:Hide()
+    end)
+    grip:SetScript("OnMouseDown", function()
+        -- прижатие к экрану выключаем на время растягивания: вместе со
+        -- StartSizing клиент «дребезжит» окно у краёв экрана
+        window:SetClampedToScreen(false)
+        window:StartSizing("BOTTOMRIGHT")
+    end)
+    grip:SetScript("OnMouseUp", function()
+        window:StopMovingOrSizing()
+        window:SetClampedToScreen(true)
+        SaveWindowGeometry()
+        -- полный пересчёт активной вкладки: во время растягивания строки
+        -- перерисовывались из кэша (без поиска/сортировки)
+        SelectTab(currentTab)
+    end)
 
     -- контейнер страниц
     local content = CreateFrame("Frame", nil, window)
@@ -1074,7 +1255,6 @@ local function BuildWindow()
     local sendLabel = MakeLabel(window, "Мировой чат (.chat):", "GameFontNormalSmall")
     sendLabel:SetPoint("BOTTOMLEFT", 20, 24)
 
-    local sendEdit
     sendEdit = MakeEdit(window, 420, function(text)
         DTCC.SendWorldMessage(text)
         sendEdit:SetText("")
@@ -1089,15 +1269,47 @@ local function BuildWindow()
     sendBtn:SetPoint("LEFT", sendEdit, "RIGHT", 10, 0)
 
     window.status = window:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-    window.status:SetPoint("BOTTOMRIGHT", -20, 6)
+    -- отступ справа больше обычного: не залезать под уголок растягивания
+    window.status:SetPoint("BOTTOMRIGHT", -24, 6)
     window.status:SetTextColor(0.55, 0.55, 0.55)
 
-    -- позиция из сохранённых настроек
-    if DTCC.db and DTCC.db.settings.winX and DTCC.db.settings.winY then
-        window:ClearAllPoints()
-        window:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT",
-            DTCC.db.settings.winX, DTCC.db.settings.winY)
+    -- размер и позиция из сохранённых настроек
+    if DTCC.db then
+        local s = DTCC.db.settings
+        local w = tonumber(s.winW) or WIN_MIN_W
+        local h = tonumber(s.winH) or WIN_MIN_H
+        -- на меньшем экране (другое разрешение/масштаб) окно не должно
+        -- оказаться больше экрана
+        w = min(max(w, WIN_MIN_W), UIParent:GetWidth())
+        h = min(max(h, WIN_MIN_H), UIParent:GetHeight())
+        window:SetWidth(w)
+        window:SetHeight(h)
+        if s.winX and s.winY then
+            window:ClearAllPoints()
+            window:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", s.winX, s.winY)
+        end
     end
+
+    -- реакция на изменение размера: раскладка вкладок и перерисовка строк
+    -- АКТИВНОЙ вкладки из кэша (поиск по всему логу на каждый пиксель
+    -- растягивания давал бы фризы)
+    window:SetScript("OnSizeChanged", function(self, w, h)
+        sendEdit:SetWidth(max(200, w - 252))
+        LayoutAllPages()
+        if currentTab == 1 then
+            BLRender()
+        elseif currentTab == 2 then
+            FRRender()
+        elseif currentTab == 3 then
+            LogRender()
+        elseif currentTab == 4 then
+            CNWordRender()
+        end
+    end)
+
+    -- первичная раскладка под восстановленный размер
+    sendEdit:SetWidth(max(200, window:GetWidth() - 252))
+    LayoutAllPages()
 
     SelectTab(1)
     window:Hide()
