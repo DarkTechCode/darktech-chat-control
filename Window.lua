@@ -1091,14 +1091,6 @@ local function SelectTab(id)
 end
 DTCC.SelectTab = SelectTab
 
-local function UpdateStatus()
-    if not window then return end
-    local bl = DTCC.Blacklist_Count and DTCC.Blacklist_Count() or 0
-    local fr = DTCC.Friends_Count and DTCC.Friends_Count() or 0
-    local lg = (DTCC.db and DTCC.db.log) and #DTCC.db.log or 0
-    window.status:SetText(string.format("ЧС: %d   •   Друзей: %d   •   Записей в логе: %d", bl, fr, lg))
-end
-
 -- Пересчёт всех вкладок под текущий размер окна. Скрытые страницы тоже:
 -- раскладка по якорям работает и у скрытых фреймов, а при переключении
 -- вкладки рефреш уже попадёт на готовую раскладку.
@@ -1247,11 +1239,6 @@ local function BuildWindow()
         tabs[i] = tab
     end
 
-    window.status = window:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-    -- отступ справа больше обычного: не залезать под уголок растягивания
-    window.status:SetPoint("BOTTOMRIGHT", -24, 6)
-    window.status:SetTextColor(0.55, 0.55, 0.55)
-
     -- размер и позиция из сохранённых настроек
     if DTCC.db then
         local s = DTCC.db.settings
@@ -1303,7 +1290,6 @@ function DTCC.OpenWindow(tab)
     BLRefresh()
     FRRefresh()
     LogRefresh()
-    UpdateStatus()
 end
 
 function DTCC.ToggleWindow()
@@ -1337,7 +1323,6 @@ DTCC.RegisterCallback("ListsChanged", function()
     if window and window:IsShown() then
         BLRefresh()
         FRRefresh()
-        UpdateStatus()
     end
 end)
 
