@@ -1152,10 +1152,20 @@ end
 --------------------------------------------------------------------------------
 -- Окно копирования debug-строк: сырые строки, собранные режимом отладки
 -- (/dtcc debug on) — кнопка «Debug» на вкладке «Лог». Текст выделяется
--- целиком, остаётся Ctrl+C; ESC закрывает окно
+-- целиком, остаётся Ctrl+C; ESC закрывает окно. В правом верхнем углу —
+-- тумблер режима отладки. Страта FULL_SCREEN_DIALOG — над окном аддона
+-- и панелью настроек (клики до крестика должны доходить)
 --------------------------------------------------------------------------------
 
-local debugCopyFrame, debugCopyEdit
+local debugCopyFrame, debugCopyEdit, debugCopyToggle
+
+-- Подпись кнопки-тумблера отладки — по фактическому состоянию настройки
+local function DebugToggleText()
+    if debugCopyToggle then
+        local on = DTCC.db and DTCC.db.settings.debug
+        debugCopyToggle:SetText(on and "Отладка: ВКЛ" or "Отладка: ВЫКЛ")
+    end
+end
 
 local function DebugCopyFill()
     local lines = DTCC.debugLines or {}
@@ -1183,7 +1193,11 @@ function DTCC.ToggleDebugCopy()
         debugCopyFrame:SetMovable(true)
         debugCopyFrame:EnableMouse(true)
         debugCopyFrame:SetClampedToScreen(true)
-        debugCopyFrame:SetFrameStrata("HIGH")
+        -- ВЫШЕ главного окна (HIGH) и панели настроек: при HIGH окно рисовалось
+        -- ПОД ними — видно, но клики (крестик/перетаскивание) до него не
+        -- доходили. Слои сиблингов в 3.3.5 ненадёжны (правило 6) — поднимаем
+        -- СТРАТОЙ, тултипы (TOOLTIP) остаются сверху
+        debugCopyFrame:SetFrameStrata("FULL_SCREEN_DIALOG")
         debugCopyFrame:SetBackdrop({
             bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
             edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -1201,6 +1215,29 @@ function DTCC.ToggleDebugCopy()
 
         local closeBtn = CreateFrame("Button", nil, debugCopyFrame, "UIPanelCloseButton")
         closeBtn:SetPoint("TOPRIGHT", -6, -6)
+
+        -- тумблер режима отладки прямо в окне: подпись всегда показывает
+        -- текущее состояние (включить сбор строк, не закрывая окно)
+        debugCopyToggle = CreateFrame("Button", "DTCCDebugCopyToggle",
+            debugCopyFrame, "UIPanelButtonTemplate")
+        debugCopyToggle:SetWidth(128)
+        debugCopyToggle:SetHeight(20)
+        debugCopyToggle:SetPoint("RIGHT", closeBtn, "LEFT", -6, 1)
+        debugCopyToggle:SetScript("OnClick", function()
+            if DTCC.db then
+                DTCC.db.settings.debug = not DTCC.db.settings.debug
+                DTCC.Print("режим отладки " ..
+                    (DTCC.db.settings.debug and "|cff3fd13fвключён|r." or "|cffff4a4aвыключен|r."))
+            end
+            DebugToggleText()
+        end)
+        debugCopyToggle:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+            GameTooltip:SetText("Режим отладки", 0.95, 0.95, 0.95)
+            GameTooltip:AddLine("Включает печать всех системных/канальных/локальных\nстрок чата и накопление их сырых версий в этот буфер.\nЭквивалент /dtcc debug on|off.", nil, nil, nil, 1)
+            GameTooltip:Show()
+        end)
+        debugCopyToggle:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
         local scroll = CreateFrame("ScrollFrame", "DTCCDebugCopyScroll", debugCopyFrame,
             "UIPanelScrollFrameTemplate")
@@ -1233,6 +1270,7 @@ function DTCC.ToggleDebugCopy()
         return
     end
     DebugCopyFill()
+    DebugToggleText()
     debugCopyFrame:Show()
     debugCopyEdit:SetFocus()
     debugCopyEdit:HighlightText() -- всё выделено: остаётся Ctrl+C
