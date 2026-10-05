@@ -271,7 +271,7 @@ local DEFAULTS = {
         friendsHighlight = true,  -- метка [ДРУГ] у сообщений друзей
 
         censorEnabled   = true,
-        censorMode      = "MASK", -- MASK = маскировать ***, HIDE = скрывать сообщение
+        censorMode      = "HIDE", -- HIDE = скрывать сообщение (дефолт), MASK = маскировать ***
         censorWords     = {},     -- список слов (нормализуется при сохранении)
         autoBlacklist   = false,  -- авто-добавление в ЧС за слово из списка
         autoBLDuration  = 86400,  -- срок авто-ЧС (сек; 0 = навсегда)
@@ -320,7 +320,7 @@ local DEFAULTS = {
     factions  = {}, -- [ключ] = "RRGGBB" — цвет имени игрока из мирового чата
                     -- (сервер красит по фракции; каналы цвет не передают — берём отсюда)
     log       = {}, -- массив { t, p, m, f, c|nil, ch|nil, src|nil }
-    dbVersion = 4,
+    dbVersion = 5,
 }
 
 local function CopyDefaults(defaults, db)
@@ -371,6 +371,12 @@ function DTCC.InitDB()
             db.settings.logChannelShow["solo progress"] = true
         end
         db.dbVersion = 4
+    end
+    -- v5: режим цензуры по умолчанию — «Скрывать из чата» (бывший дефолт
+    -- MASK никто не выбирал осознанно; переключается в настройках)
+    if oldVersion < 5 then
+        db.settings.censorMode = "HIDE"
+        db.dbVersion = 5
     end
     DTCC.db = db
 end

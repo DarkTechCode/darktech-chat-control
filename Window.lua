@@ -841,14 +841,21 @@ LogRenderInner = function()
             -- сообщение в SMF: при смене записи/ширины перезаливаем
             -- (SetMaxLines(1) сам выталкивает старую строку, Clear в 3.3.5 не гарантирован)
             if row.smfEntry ~= e or row.smfW ~= msgW then
-                row.smf:SetWidth(msgW)
+                -- Единственный надёжный триггер пересборки видимой области
+                -- SMF в 3.3.5 — РЕАЛЬНОЕ изменение ШИРИНЫ (AddMessage даже
+                -- показанному фрейму не рисуется, пока область не собрана;
+                -- толчок высотой в том же тике клиент слипает до «нет
+                -- изменения» — плейтест v1.10.1 это показал). Чередуем
+                -- msgW/msgW+1: каждая заливка меняет ширину на 1px; +1
+                -- безопасен для переноса (замер высоты идёт по msgW-4)
+                row.smfFlip = not row.smfFlip
+                row.smf:SetWidth(msgW + (row.smfFlip and 1 or 0))
                 row.smfEntry, row.smfW = e, msgW
                 pcall(row.smf.Clear, row.smf)
                 row.smf:AddMessage(LogEntryTag(e) .. tostring(e.m or ""), 0.92, 0.92, 0.92)
-                -- AddMessage видимой области сам не пересобирает — толкаем
-                -- высоту (без этого длинный путь «строка была скрыта»
-                -- рисует пустоту до первого ресайза)
-                row.smf:SetHeight(msgH + 1)
+                -- второй независимый триггер пересборки: повторная установка
+                -- шрифта заставляет SMF перемерить и переложить строки
+                row.smf:SetFont(logFontPath, logFontHeight)
             end
             row.smf:SetHeight(msgH)
         else
@@ -1479,13 +1486,22 @@ local function BuildLogPage(parent)
     LogRebuildChannelChecks()
 
     logPage:SetScript("OnMouseWheel", function(_, delta)
-        SetLogOffset(logOff - (delta > 0 and 2 or -2))
+        SetLogOffset(logOff - (delta > 0 and 3 or -3))
     end)
 
     logRows = {}
     for i = 1, ROW_POOL do
         local row = CreateFrame("Frame", nil, logPage)
         row:SetHeight(ROW_H)
+
+        -- колесо мыши: клиент 3.3.5 отдаёт событие только mouse-enabled
+        -- фрейму под курсором (head/smf перехватывают у страницы, поэтому
+        -- скрипт нужен на каждой поверхности строки), иначе зумит камеру
+        local wheel = function(_, delta)
+            SetLogOffset(logOff - (delta > 0 and 3 or -3))
+        end
+        row:EnableMouse(true)
+        row:SetScript("OnMouseWheel", wheel)
 
         -- левая часть строки (время + игрок): кнопка с подсветкой, тултипом и ПКМ-меню
         local head = CreateFrame("Button", nil, row)
@@ -1509,6 +1525,7 @@ local function BuildLogPage(parent)
         head.nameF:SetJustifyH("LEFT")
         head:SetScript("OnEnter", LogTooltip)
         head:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        head:SetScript("OnMouseWheel", wheel)
         head:SetScript("OnClick", function(self, mouse)
             if mouse == "RightButton" and self.entry then
                 ShowMenu({ mode = "log", entry = self.entry })
@@ -1546,6 +1563,7 @@ local function BuildLogPage(parent)
                 ShowMenu({ mode = "log", entry = row.entry })
             end
         end)
+        smf:SetScript("OnMouseWheel", wheel)
         row.smf = smf
 
         -- тонкая линия-разделитель внизу строки (многострочные записи читаются легче)
