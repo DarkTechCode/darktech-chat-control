@@ -508,6 +508,26 @@ local function BuildPanel()
     end)
     btnReset:SetPoint("LEFT", btnWindow, "RIGHT", 8, 0)
     Advance(32)
+    Advance(6)
+
+    ---------------------------------------------------------------- О создателе
+    local secAbout = NewSection(content, "О создателе")
+    secAbout:SetPoint("TOPLEFT", 0, CY)
+    Advance(24)
+
+    -- адреса — просто выделенный золотом текст: в своём UI ссылки
+    -- некликабельны (SetHyperlinksEnabled появился только в 4.0.6)
+    local function AboutLine(label, value)
+        local line = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        line:SetPoint("TOPLEFT", 10, CY)
+        line:SetText(label .. ": |cffffd100" .. value .. "|r")
+        Advance(18)
+    end
+
+    AboutLine("Автор", "Dark Wizard")
+    AboutLine("Почта", "warcraft@darktech.ru")
+    AboutLine("Сайт", "https://darktech.ru")
+    AboutLine("GitHub", "https://github.com/DarkTechCode/")
 
     content:SetHeight(-CY + 20)
 
