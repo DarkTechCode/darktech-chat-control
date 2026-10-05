@@ -977,6 +977,26 @@ local function LogFilterChanged(focus, enabled)
     end
 end
 
+-- Галочка «Все» подсвечена, когда отмечена каждая галочка фильтра
+-- (источники, чаты, локальные, RAW и все типы)
+local function LogSyncAllCheck()
+    local acb = logCheckboxes.all
+    if not acb then return end
+    local all = true
+    if not (logCheckboxes.players and logCheckboxes.players:GetChecked()) then all = false end
+    if not (logCheckboxes.raw and logCheckboxes.raw:GetChecked()) then all = false end
+    for _, sc in ipairs(logSourceChecks) do
+        if not (sc.cb and sc.cb:GetChecked()) then all = false end
+    end
+    for _, cc in ipairs(logChannelChecks) do
+        if cc.key and not cc.cb:GetChecked() then all = false end
+    end
+    for _, fc in ipairs(logFlagChecks) do
+        if not fc.cb:GetChecked() then all = false end
+    end
+    acb:SetChecked(all)
+end
+
 -- «Очистить лог» по текущим фильтрам: запрос запоминается до подтверждения,
 -- диалог показывает, сколько записей подпадает
 function DTCC.RequestClearLog()
@@ -989,6 +1009,91 @@ function DTCC.RequestClearLog()
             " из " .. ((DTCC.db and #DTCC.db.log) or 0) .. " записей лога."
     end
     StaticPopup_Show("DTCC_CLEAR_LOG")
+end
+
+--------------------------------------------------------------------------------
+-- Окно копирования debug-строк: сырые строки, собранные режимом отладки
+-- (/dtcc debug on) — кнопка «Debug» на вкладке «Лог». Текст выделяется
+-- целиком, остаётся Ctrl+C; ESC закрывает окно
+--------------------------------------------------------------------------------
+
+local debugCopyFrame, debugCopyEdit
+
+local function DebugCopyFill()
+    local lines = DTCC.debugLines or {}
+    local text
+    if #lines > 0 then
+        text = table.concat(lines, "\n")
+    else
+        text = "(пусто — включите /dtcc debug on и дождитесь сообщений в чатах)"
+    end
+    debugCopyEdit:SetText(text)
+    -- многострочный EditBox не скроллится сам: высота примерно по числу строк
+    local _, nl = gsub(text, "\n", "\n")
+    debugCopyEdit:SetHeight(max(120, (nl + 1) * 14 + 20))
+end
+
+function DTCC.ToggleDebugCopy()
+    if not debugCopyFrame then
+        debugCopyFrame = CreateFrame("Frame", "DTCCDebugCopy", UIParent)
+        debugCopyFrame:SetWidth(560)
+        debugCopyFrame:SetHeight(380)
+        debugCopyFrame:SetMovable(true)
+        debugCopyFrame:EnableMouse(true)
+        debugCopyFrame:SetClampedToScreen(true)
+        debugCopyFrame:SetFrameStrata("HIGH")
+        debugCopyFrame:SetBackdrop({
+            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 12,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 },
+        })
+        debugCopyFrame:SetPoint("CENTER")
+        tinsert(UISpecialFrames, "DTCCDebugCopy")
+        debugCopyFrame:SetScript("OnMouseDown", function(self) self:StartMoving() end)
+        debugCopyFrame:SetScript("OnMouseUp", function(self) self:StopMovingOrSizing() end)
+
+        local title = debugCopyFrame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        title:SetPoint("TOPLEFT", 14, -12)
+        title:SetText("|cff00e5ffDTCC|r — debug-строки (сырые)")
+
+        local closeBtn = CreateFrame("Button", nil, debugCopyFrame, "UIPanelCloseButton")
+        closeBtn:SetPoint("TOPRIGHT", -6, -6)
+
+        local scroll = CreateFrame("ScrollFrame", "DTCCDebugCopyScroll", debugCopyFrame,
+            "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 12, -34)
+        scroll:SetPoint("BOTTOMRIGHT", -28, 44)
+
+        debugCopyEdit = CreateFrame("EditBox", "DTCCDebugCopyEdit", scroll)
+        debugCopyEdit:SetMultiLine(true)
+        debugCopyEdit:SetAutoFocus(false)
+        debugCopyEdit:SetFontObject("GameFontHighlightSmall")
+        debugCopyEdit:SetWidth(490)
+        debugCopyEdit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+        scroll:SetScrollChild(debugCopyEdit)
+
+        local wipeBtn = MakeButton(debugCopyFrame, "Очистить буфер", 120, function()
+            DTCC.debugLines = {}
+            DebugCopyFill()
+        end, "DTCCDebugCopyWipe")
+        wipeBtn:SetPoint("BOTTOMLEFT", 12, 10)
+
+        local hint = debugCopyFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        hint:SetPoint("LEFT", wipeBtn, "RIGHT", 12, 0)
+        hint:SetTextColor(0.6, 0.6, 0.6)
+        hint:SetText("Текст выделен целиком — нажмите Ctrl+C")
+
+        debugCopyFrame:Hide()
+    end
+    if debugCopyFrame:IsShown() then
+        debugCopyFrame:Hide()
+        return
+    end
+    DebugCopyFill()
+    debugCopyFrame:Show()
+    debugCopyEdit:SetFocus()
+    debugCopyEdit:HighlightText() -- всё выделено: остаётся Ctrl+C
 end
 
 local function LogTooltip(self)
@@ -1028,6 +1133,7 @@ local function LogLayoutChecks()
     local function add(cb)
         if cb then ordered[#ordered + 1] = cb end
     end
+    add(logCheckboxes.all) -- «Все» — первой в ряду
     add(logCheckboxes.players)
     for _, cc in ipairs(logChannelChecks) do
         if cc.key then add(cc.cb) end
@@ -1036,7 +1142,7 @@ local function LogLayoutChecks()
         add(sc.cb)
     end
     add(logCheckboxes.raw)
-    for _, ckey in ipairs({ "alltypes", "friend", "bl", "hidden", "censor", "autobl" }) do
+    for _, ckey in ipairs({ "friend", "bl", "hidden", "censor", "autobl" }) do
         add(logCheckboxes[ckey])
     end
 
@@ -1090,6 +1196,7 @@ local function LogRebuildChannelChecks()
                         DTCC.db.settings.logChannelShow = DTCC.db.settings.logChannelShow or {}
                         DTCC.db.settings.logChannelShow[cc.key] = v
                     end
+                    LogSyncAllCheck()
                     DTCC.FireEvent("SettingsChanged")
                     LogFilterChanged({ kind = "ch", key = cc.key }, v)
                 end)
@@ -1114,6 +1221,7 @@ local function LogRebuildChannelChecks()
         logChannelChecks[i].key = nil
         logChannelChecks[i].cb:Hide()
     end
+    LogSyncAllCheck()
     LogLayoutChecks()
 end
 
@@ -1159,6 +1267,18 @@ local function BuildLogPage(parent)
     local searchBtn = MakeButton(logPage, "Искать", 62, function() LogRefresh() end)
     searchBtn:SetPoint("TOPLEFT", 428, -4)
 
+    local debugBtn = MakeButton(logPage, "Debug", 56, function()
+        DTCC.ToggleDebugCopy()
+    end, "DTCCWin_LogDebug")
+    debugBtn:SetPoint("TOPRIGHT", logPage, "TOPRIGHT", -114, -4)
+    debugBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:SetText("Скопировать debug-строки", 0.95, 0.95, 0.95)
+        GameTooltip:AddLine("Окно с сырыми строками чата, собранными режимом\nотладки (/dtcc debug on). Текст выделяется целиком —\nостаётся нажать Ctrl+C.", nil, nil, nil, 1)
+        GameTooltip:Show()
+    end)
+    debugBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
     local clearBtn = MakeButton(logPage, "Очистить лог", 100, function()
         DTCC.RequestClearLog()
     end, "DTCCWin_LogClear")
@@ -1171,6 +1291,45 @@ local function BuildLogPage(parent)
     end)
     clearBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+    -- «Все» — ПЕРВАЯ галочка ряда: включает/выключает все фильтры разом
+    -- (источники «Мировой чат»/чаты/локальные/RAW и все типы). Создаётся
+    -- до остальных: замыкания видят списки галочек в момент клика
+    logCheckboxes.all = DTCC.UI.Check(logPage, "Все",
+        "Отметить/снять ВСЕ галочки фильтров сразу:\nисточники (мировой чат, чаты, локальные, RAW) и типы.\nПодсвечивается, когда отмечена каждая галочка.",
+        function(v)
+            if DTCC.db then
+                local s = DTCC.db.settings
+                s.logShowPlayers = v
+                s.logShowRaw = v
+                s.logShowSources = s.logShowSources or {}
+                for _, def in ipairs(DTCC.LOCAL_SOURCES) do
+                    s.logShowSources[def.src] = v
+                end
+                s.logChannelShow = s.logChannelShow or {}
+                for _, cc in ipairs(logChannelChecks) do
+                    if cc.key then s.logChannelShow[cc.key] = v end
+                end
+                local mask = 0
+                for _, fc in ipairs(logFlagChecks) do
+                    if v then mask = mask + fc.flag end
+                end
+                s.logFilterFlags = mask
+            end
+            if logCheckboxes.players then logCheckboxes.players:SetChecked(v) end
+            if logCheckboxes.raw then logCheckboxes.raw:SetChecked(v) end
+            for _, sc in ipairs(logSourceChecks) do
+                if sc.cb then sc.cb:SetChecked(v) end
+            end
+            for _, cc in ipairs(logChannelChecks) do
+                if cc.key then cc.cb:SetChecked(v) end
+            end
+            for _, fc in ipairs(logFlagChecks) do
+                fc.cb:SetChecked(v)
+            end
+            DTCC.FireEvent("SettingsChanged")
+            LogFilterChanged()
+        end)
+
     -- фильтры-галочки: создаются без позиций — раскладку (одна строка,
     -- перенос при нехватке ширины) делает LogLayoutChecks, когда готовы все.
     -- focus — источник для прокрутки при включении (см. LogFilterChanged)
@@ -1179,6 +1338,7 @@ local function BuildLogPage(parent)
             or { kind = "raw" }
         local cb = DTCC.UI.Check(logPage, labelText, tooltip, function(v)
             if DTCC.db then DTCC.db.settings[settingKey] = v end
+            LogSyncAllCheck()
             DTCC.FireEvent("SettingsChanged")
             LogFilterChanged(focus, v)
         end)
@@ -1201,6 +1361,7 @@ local function BuildLogPage(parent)
                 DTCC.db.settings.logShowSources = DTCC.db.settings.logShowSources or {}
                 DTCC.db.settings.logShowSources[src] = v
             end
+            LogSyncAllCheck()
             DTCC.FireEvent("SettingsChanged")
             LogFilterChanged(focus, v)
         end)
@@ -1214,10 +1375,7 @@ local function BuildLogPage(parent)
         local cb = DTCC.UI.Check(logPage, labelText, tooltip, function()
             local _, _, mask = LogFilterState()
             if DTCC.db then DTCC.db.settings.logFilterFlags = mask end
-            -- «Все» подсвечивается, когда отмечен каждый тип
-            if logCheckboxes.alltypes then
-                logCheckboxes.alltypes:SetChecked(mask == DTCC.FLAG_TYPE_ALL)
-            end
+            LogSyncAllCheck()
             DTCC.FireEvent("SettingsChanged")
             LogFilterChanged()
         end)
@@ -1239,25 +1397,6 @@ local function BuildLogPage(parent)
         "Только сообщения с запрещёнными словами.")
     FlagCheck("autobl", DTCC.FLAG_AUTOBL, "Авто-ЧС",
         "Только сообщения, за которые игрок попал в ЧС автоматически.\nНесколько типов-галочек складываются как «ИЛИ».")
-
-    -- «Все»: разом отметить/снять все типы. Все отмечены = фильтра по типам
-    -- нет (видны и записи без пометок) — как и когда не отмечено ничего
-    logCheckboxes.alltypes = DTCC.UI.Check(logPage, "Все",
-        "Отметить все типы записей сразу.\nВсе типы отмечены = фильтра по типам нет: видны любые записи,\nвключая совсем без пометок (не отмечено ничего — то же самое).",
-        function(v)
-            local mask = 0
-            for _, fc in ipairs(logFlagChecks) do
-                fc.cb:SetChecked(v)
-                if v then mask = mask + fc.flag end
-            end
-            if DTCC.db then DTCC.db.settings.logFilterFlags = mask end
-            DTCC.FireEvent("SettingsChanged")
-            LogFilterChanged()
-        end)
-    if DTCC.db then
-        logCheckboxes.alltypes:SetChecked(
-            (tonumber(DTCC.db.settings.logFilterFlags) or 0) == DTCC.FLAG_TYPE_ALL)
-    end
 
     logCountLabel = MakeLabel(logPage, "", "GameFontNormalSmall")
     logCountLabel:SetTextColor(0.6, 0.6, 0.6)

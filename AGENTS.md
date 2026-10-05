@@ -168,6 +168,20 @@ RAW типы не касаются) → скрытие ЧС (hideBlacklisted/з�
 
 ## Текущее состояние (обновляй при релизе)
 
+- **v1.9.0 (2026-10-05)**: (1) «Все» — ПЕРВОЙ в ряду (LogLayoutChecks:
+  add(logCheckboxes.all) до players; ключ «all», бывш. alltypes) и включает
+  ВСЕ фильтры (источники/чаты/локальные/RAW/типы) — пишет все настройки
+  сразу + SetChecked всем; `LogSyncAllCheck()` (после LogFilterChanged)
+  подсвечивает «Все» при полном наборе, зовётся из каждого onClick и
+  LogRebuildChannelChecks. (2) Кнопка «Debug» на вкладке «Лог» (TOPRIGHT
+  -114) → `DTCC.ToggleDebugCopy`: окно `DTCCDebugCopy` (UISpecialFrames,
+  ESC) с multiline EditBox в UIPanelScrollFrameTemplate — высота поля ≈
+  строки×14 (сам не скроллится), `SetText` + `SetFocus` +
+  `HighlightText()` (всё выделено → Ctrl+C); буфер `DTCC.debugLines`
+  (сессия, кап 400) наполняет `DTCC.DebugCapture` в трёх debug-ветках
+  Capture (СЫРАЯ строка, без экранирования — для разбора формата).
+  Prelude: mkframe.HighlightText записывает __hl. Тесты: логика 120/120,
+  UI 146/146. ПРАВКА .TOC — полный перезапуск.
 - **v1.8.1 (2026-10-05)**: (1) Галочка «Все» перед типами (logCheckboxes.
   alltypes, в раскладке первой среди типов): отмечает/снимает все 5 типов,
   пишет logFilterFlags=FLAG_TYPE_ALL/0; отдельные типы подсвечивают «Все»

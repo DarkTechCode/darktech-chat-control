@@ -460,6 +460,15 @@ local function ProcessChatLine(self, name, bare, prefix, meta)
     return true
 end
 
+-- Буфер сырых строк для копирования (кнопка «Debug» на вкладке «Лог»):
+-- пока включён режим отладки, копим строки КАК ЕСТЬ (без экранирования —
+-- для точного разбора формата). Буфер на сессию, не сохраняется
+function DTCC.DebugCapture(text)
+    DTCC.debugLines = DTCC.debugLines or {}
+    DTCC.debugLines[#DTCC.debugLines + 1] = tostring(text or "")
+    if #DTCC.debugLines > 400 then tremove(DTCC.debugLines, 1) end
+end
+
 --------------------------------------------------------------------------------
 -- Фильтр системных сообщений
 --------------------------------------------------------------------------------
@@ -472,6 +481,7 @@ local function SystemFilter(self, event, text)
     local s = db.settings
 
     if s.debug then
+        DTCC.DebugCapture(text)
         DTCC.Print(DTCC.COLORS.grey .. "[debug] СИСТ: " .. DTCC.DebugEscape(text))
     end
 
@@ -547,6 +557,8 @@ local function ChannelFilter(self, event, msg, sender, lang, chanWithNumber)
     chanName = gsub(chanName, "^%d+%.%s*", "")
 
     if s.debug then
+        DTCC.DebugCapture("КАНАЛ [" .. chanName .. "] " .. tostring(sender or "?") ..
+            ": " .. tostring(msg or ""))
         DTCC.Print(DTCC.COLORS.grey .. "[debug] КАНАЛ [" .. chanName .. "] " ..
             tostring(sender or "?") .. ": " .. DTCC.DebugEscape(msg))
     end
@@ -600,6 +612,8 @@ local function LocalChatFilter(self, event, msg, sender)
     if not def then return end
 
     if s.debug then
+        DTCC.DebugCapture("ЛОКАЛЬНЫЙ [" .. def.label .. "] " .. tostring(sender or "?") ..
+            ": " .. tostring(msg or ""))
         DTCC.Print(DTCC.COLORS.grey .. "[debug] ЛОКАЛЬНЫЙ [" .. def.label .. "] " ..
             tostring(sender or "?") .. ": " .. DTCC.DebugEscape(msg))
     end
