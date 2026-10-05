@@ -527,7 +527,7 @@ local function BuildPanel()
     AboutLine("Автор", "Dark Wizard")
     AboutLine("Почта", "warcraft@darktech.ru")
     AboutLine("Сайт", "https://darktech.ru")
-    AboutLine("GitHub", "https://github.com/DarkTechCode/")
+    AboutLine("GitHub", "https://github.com/DarkTechCode/darktech-chat-control")
 
     content:SetHeight(-CY + 20)
 
