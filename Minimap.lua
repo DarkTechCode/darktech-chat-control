@@ -51,7 +51,10 @@ local function BuildButton()
     local icon = button:CreateTexture(nil, "ARTWORK")
     icon:SetWidth(17)
     icon:SetHeight(17)
-    icon:SetTexture("Interface\\Icons\\Trade_Engineering")
+    -- «пузырь речи» из стандартного набора клиента (иконка заклинания
+    -- Silence, есть с ванильных времён) — тематичнее шестерёнки для аддона
+    -- про чат; запасные варианты: INV_Misc_Note_01 (записка)
+    icon:SetTexture("Interface\\Icons\\Spell_Holy_Silence")
     icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
     icon:SetPoint("TOPLEFT", 7, -6)
     button.icon = icon

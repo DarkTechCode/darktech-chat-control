@@ -2,7 +2,7 @@
 ## Title: DarkTech Chat Control |cff00e5ff[DTCC]|r
 ## Notes: Управление межфракционным чатом (.chat): чёрный список, друзья, цензура, авто-ЧС, лог с поиском, алерты о близости.
 ## Author: DarkTech
-## Version: 1.0.2
+## Version: 1.0.3
 ## SavedVariables: DarkTechCC_DB
 Core.lua
 Widgets.lua
