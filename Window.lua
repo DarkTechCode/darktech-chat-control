@@ -911,38 +911,33 @@ local function BuildLogPage(parent)
     end)
     clearBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-    -- строка 2: фильтры-галочки в одну строку
-    local function SourceCheck(settingKey, ckey, labelText, tooltip, x)
+    -- строка 2: фильтры-галочки в одну строку.
+    -- ВАЖНО: рамка чекбокса узкая (26px), подпись живёт ЗА её пределами —
+    -- цеплять «LEFT к RIGHT рамки предыдущего» нельзя (квадрат встанет поверх
+    -- чужой подписи). Позиции считаем вручную по фактической ширине подписей.
+    local function SourceCheck(settingKey, ckey, labelText, tooltip)
         local cb = DTCC.UI.Check(logPage, labelText, tooltip, function(v)
             if DTCC.db then DTCC.db.settings[settingKey] = v end
             DTCC.FireEvent("SettingsChanged")
             LogRefresh()
         end)
-        if x then cb:SetPoint("TOPLEFT", x, -30) end
         if DTCC.db then cb:SetChecked(DTCC.db.settings[settingKey]) end
         logCheckboxes[ckey] = cb
         return cb
     end
 
-    local cbPlayers = SourceCheck("logShowPlayers", "players", "Игроки",
-        "Сообщения мирового чата от игроков.\nПо умолчанию включено — системные строки не показываются.", 4)
-    local cbRaw = SourceCheck("logShowRaw", "raw", "RAW (системные)",
-        "Строки со ссылкой игрока, записанные как есть: входы, достижения,\nлут и другой системный мусор в нестандартном формате.",
-        nil)
-    cbRaw:SetPoint("LEFT", cbPlayers, "RIGHT", 12, 0)
+    SourceCheck("logShowPlayers", "players", "Игроки",
+        "Сообщения мирового чата от игроков.\nПо умолчанию включено — системные строки не показываются.")
+    SourceCheck("logShowRaw", "raw", "RAW",
+        "RAW-записи: системные строки со ссылкой игрока (входы, достижения,\nлут и другой мусор в нестандартном формате), записанные как есть.")
 
-    local function FlagCheck(prev, key, flag, labelText, tooltip)
+    local function FlagCheck(key, flag, labelText, tooltip)
         local cb = DTCC.UI.Check(logPage, labelText, tooltip, function()
             local _, _, mask = LogFilterState()
             if DTCC.db then DTCC.db.settings.logFilterFlags = mask end
             DTCC.FireEvent("SettingsChanged")
             LogRefresh()
         end)
-        if prev then
-            cb:SetPoint("LEFT", prev, "RIGHT", 12, 0)
-        else
-            cb:SetPoint("LEFT", cbRaw, "RIGHT", 12, 0)
-        end
         if DTCC.db then
             cb:SetChecked(bit.band(tonumber(DTCC.db.settings.logFilterFlags) or 0, flag) ~= 0)
         end
@@ -951,16 +946,27 @@ local function BuildLogPage(parent)
         return cb
     end
 
-    local cbFriend = FlagCheck(nil, "friend", DTCC.FLAG_FRIEND, "Друзья",
+    FlagCheck("friend", DTCC.FLAG_FRIEND, "Друзья",
         "Только сообщения игроков из списка друзей.")
-    local cbBL = FlagCheck(cbFriend, "bl", DTCC.FLAG_BLACKLIST, "ЧС",
+    FlagCheck("bl", DTCC.FLAG_BLACKLIST, "ЧС",
         "Только сообщения игроков из чёрного списка.")
-    local cbHidden = FlagCheck(cbBL, "hidden", DTCC.FLAG_HIDDEN, "Скрытые",
+    FlagCheck("hidden", DTCC.FLAG_HIDDEN, "Скрытые",
         "Только сообщения, скрытые из чата (игрок в ЧС).")
-    local cbCensor = FlagCheck(cbHidden, "censor", DTCC.FLAG_CENSORED, "Цензура",
+    FlagCheck("censor", DTCC.FLAG_CENSORED, "Цензура",
         "Только сообщения с запрещёнными словами.")
-    FlagCheck(cbCensor, "autobl", DTCC.FLAG_AUTOBL, "Авто-ЧС",
+    FlagCheck("autobl", DTCC.FLAG_AUTOBL, "Авто-ЧС",
         "Только сообщения, за которые игрок попал в ЧС автоматически.")
+
+    -- одна строка: квадрат 26px, подпись в 4px правее него, до следующего
+    -- квадрата 14px (по ширине подписи, не по рамке!)
+    local cbX = 4
+    for _, ckey in ipairs({ "players", "raw", "friend", "bl", "hidden", "censor", "autobl" }) do
+        local cb = logCheckboxes[ckey]
+        if cb then
+            cb:SetPoint("TOPLEFT", logPage, "TOPLEFT", cbX, -30)
+            cbX = cbX + 26 + 4 + (cb.label:GetStringWidth() or 0) + 14
+        end
+    end
 
     logCountLabel = MakeLabel(logPage, "", "GameFontNormalSmall")
     logCountLabel:SetTextColor(0.6, 0.6, 0.6)
