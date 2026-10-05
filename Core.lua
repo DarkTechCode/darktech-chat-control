@@ -26,6 +26,11 @@ DTCC.FLAG_FRIEND    = 8    -- автор в списке друзей
 DTCC.FLAG_AUTOBL    = 16   -- автор добавлен в ЧС автоматически за это сообщение
 DTCC.FLAG_RAW       = 32   -- строка нестандартного вида: записана как есть, без обработки
 
+-- Все типовые флаги разом (галочка «Все»): полное совпадение трактуется
+-- как «фильтра по типам нет» — видны и записи без пометок (f=0)
+DTCC.FLAG_TYPE_ALL = DTCC.FLAG_HIDDEN + DTCC.FLAG_CENSORED + DTCC.FLAG_BLACKLIST
+    + DTCC.FLAG_FRIEND + DTCC.FLAG_AUTOBL
+
 DTCC.COLORS = {
     main   = "|cff00e5ff",
     red    = "|cffff4a4a",

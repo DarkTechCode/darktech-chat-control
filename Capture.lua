@@ -281,6 +281,10 @@ function DTCC.PrepareLogQuery(opts)
     q.name = opts.name and DTCC.utf8lower(strtrim(opts.name)) or ""
     q.minT = opts.minT or 0
     q.flags = opts.flags or 0
+    -- «отмечены все типы» (галочка «Все») = фильтра по типам нет: записи
+    -- без пометок (f=0) тоже подходят — иначе чистка «по всем типам»
+    -- оставляла бы их в логе невидимыми
+    if q.flags == DTCC.FLAG_TYPE_ALL then q.flags = 0 end
     q.channels = opts.channels
     q.sources = opts.sources
     q.includeRaw = opts.includeRaw

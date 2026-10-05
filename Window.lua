@@ -1036,7 +1036,7 @@ local function LogLayoutChecks()
         add(sc.cb)
     end
     add(logCheckboxes.raw)
-    for _, ckey in ipairs({ "friend", "bl", "hidden", "censor", "autobl" }) do
+    for _, ckey in ipairs({ "alltypes", "friend", "bl", "hidden", "censor", "autobl" }) do
         add(logCheckboxes[ckey])
     end
 
@@ -1214,6 +1214,10 @@ local function BuildLogPage(parent)
         local cb = DTCC.UI.Check(logPage, labelText, tooltip, function()
             local _, _, mask = LogFilterState()
             if DTCC.db then DTCC.db.settings.logFilterFlags = mask end
+            -- «Все» подсвечивается, когда отмечен каждый тип
+            if logCheckboxes.alltypes then
+                logCheckboxes.alltypes:SetChecked(mask == DTCC.FLAG_TYPE_ALL)
+            end
             DTCC.FireEvent("SettingsChanged")
             LogFilterChanged()
         end)
@@ -1235,6 +1239,25 @@ local function BuildLogPage(parent)
         "Только сообщения с запрещёнными словами.")
     FlagCheck("autobl", DTCC.FLAG_AUTOBL, "Авто-ЧС",
         "Только сообщения, за которые игрок попал в ЧС автоматически.\nНесколько типов-галочек складываются как «ИЛИ».")
+
+    -- «Все»: разом отметить/снять все типы. Все отмечены = фильтра по типам
+    -- нет (видны и записи без пометок) — как и когда не отмечено ничего
+    logCheckboxes.alltypes = DTCC.UI.Check(logPage, "Все",
+        "Отметить все типы записей сразу.\nВсе типы отмечены = фильтра по типам нет: видны любые записи,\nвключая совсем без пометок (не отмечено ничего — то же самое).",
+        function(v)
+            local mask = 0
+            for _, fc in ipairs(logFlagChecks) do
+                fc.cb:SetChecked(v)
+                if v then mask = mask + fc.flag end
+            end
+            if DTCC.db then DTCC.db.settings.logFilterFlags = mask end
+            DTCC.FireEvent("SettingsChanged")
+            LogFilterChanged()
+        end)
+    if DTCC.db then
+        logCheckboxes.alltypes:SetChecked(
+            (tonumber(DTCC.db.settings.logFilterFlags) or 0) == DTCC.FLAG_TYPE_ALL)
+    end
 
     logCountLabel = MakeLabel(logPage, "", "GameFontNormalSmall")
     logCountLabel:SetTextColor(0.6, 0.6, 0.6)
