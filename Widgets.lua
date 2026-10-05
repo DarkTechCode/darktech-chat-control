@@ -38,6 +38,12 @@ end
 
 DTCC.CloseMenu = CloseMenu
 
+-- Меню сейчас открыто с этим якорем? Для тумблера дропдауна: повторный
+-- клик по якорю должен ЗАКРЫТЬ список, а не переоткрыть его
+function DTCC.UI.MenuOpenFor(frame)
+    return frame ~= nil and anchorFrame == frame and popup ~= nil and popup:IsShown()
+end
+
 local function EnsureMenu()
     if popup then return end
 
@@ -57,6 +63,17 @@ local function EnsureMenu()
         if anchorFrame and not anchorFrame:IsVisible() then
             self:Hide()
             return
+        end
+        -- КЛИК ВНЕ МЕНЮ = закрыть немедленно (плейтест: без этого меню
+        -- «Мировой чат»/контекстное в чате висело до ESC/таймера). Ловец
+        -- кликов на этом клиенте не работает (см. шапку) — опрашиваем
+        -- кнопку: если любая кнопка мыши нажата, а курсор вне меню и вне
+        -- якоря, прячем. Клик по пункту/якорю проходит: курсор над ними
+        if IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton") then
+            if not self:IsMouseOver() and not (anchorFrame and anchorFrame:IsMouseOver()) then
+                self:Hide()
+                return
+            end
         end
         if self:IsMouseOver() or (anchorFrame and anchorFrame:IsMouseOver()) then
             self.idle = 0
@@ -227,6 +244,11 @@ function DTCC.UI.CreateDropdown(parent, items, get, set, width, name, tooltip)
     end
 
     dd:SetScript("OnClick", function(self)
+        -- тумблер: повторный клик по дропдауну закрывает открытый список
+        if DTCC.UI.MenuOpenFor(self) then
+            DTCC.CloseMenu()
+            return
+        end
         local menuItems = {}
         local current = get()
         for _, it in ipairs(items) do
