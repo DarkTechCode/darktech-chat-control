@@ -833,6 +833,11 @@ LogRenderInner = function()
                     row.head.nameF:SetTextColor(0.85, 0.9, 1)
                 end
             end
+            -- показать строку ДО заливки текста: клиент 3.3.5 не отрисовывает
+            -- сообщения, добавленные скрытому SMF — они лежат в истории и
+            -- не появляются, пока фрейм не сменит размер (поэтому текст
+            -- «возникал» только при растягивании окна)
+            row:Show()
             -- сообщение в SMF: при смене записи/ширины перезаливаем
             -- (SetMaxLines(1) сам выталкивает старую строку, Clear в 3.3.5 не гарантирован)
             if row.smfEntry ~= e or row.smfW ~= msgW then
@@ -840,12 +845,17 @@ LogRenderInner = function()
                 row.smfEntry, row.smfW = e, msgW
                 pcall(row.smf.Clear, row.smf)
                 row.smf:AddMessage(LogEntryTag(e) .. tostring(e.m or ""), 0.92, 0.92, 0.92)
+                -- AddMessage видимой области сам не пересобирает — толкаем
+                -- высоту (без этого длинный путь «строка была скрыта»
+                -- рисует пустоту до первого ресайза)
+                row.smf:SetHeight(msgH + 1)
             end
             row.smf:SetHeight(msgH)
-            row:Show()
         else
             row.entry = nil
             row.head.entry = nil
+            row.smfEntry = nil -- скрытая строка: при следующем показе текст
+                               -- SMF заливаем заново, не полагаясь на кэш
             row:Hide()
         end
     end
