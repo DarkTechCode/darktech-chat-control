@@ -634,7 +634,8 @@ local logRendering = false -- защита от повторного входа 
 local LOG_TIME_W  = 70     -- колонка «Время»
 local LOG_NAME_W  = 86     -- колонка «Игрок»
 local LOG_MSG_X   = 168    -- X колонки «Сообщение» (в координатах строки)
-local LOG_TOP     = 78     -- верх списка: панели поиска/фильтров + заголовки
+local LOG_TOP     = 98     -- верх списка: поиск (−4…−26) + галочки 26px (−30…−56)
+                           -- + счётчик (−60…−75) + заголовки (−78…−93)
 local LOG_BOTTOM  = 8
 
 local PERIODS = {
@@ -963,11 +964,11 @@ local function BuildLogPage(parent)
 
     logCountLabel = MakeLabel(logPage, "", "GameFontNormalSmall")
     logCountLabel:SetTextColor(0.6, 0.6, 0.6)
-    logCountLabel:SetPoint("TOPLEFT", 6, -58)
+    logCountLabel:SetPoint("TOPLEFT", 6, -60)
 
-    local h1 = MakeLabel(logPage, "Время");     h1:SetTextColor(0.5, 0.5, 0.5); h1:SetPoint("TOPLEFT", 10, -72)
-    local h2 = MakeLabel(logPage, "Игрок");     h2:SetTextColor(0.5, 0.5, 0.5); h2:SetPoint("TOPLEFT", 84, -72)
-    local h3 = MakeLabel(logPage, "Сообщение"); h3:SetTextColor(0.5, 0.5, 0.5); h3:SetPoint("TOPLEFT", 174, -72)
+    local h1 = MakeLabel(logPage, "Время");     h1:SetTextColor(0.5, 0.5, 0.5); h1:SetPoint("TOPLEFT", 10, -78)
+    local h2 = MakeLabel(logPage, "Игрок");     h2:SetTextColor(0.5, 0.5, 0.5); h2:SetPoint("TOPLEFT", 84, -78)
+    local h3 = MakeLabel(logPage, "Сообщение"); h3:SetTextColor(0.5, 0.5, 0.5); h3:SetPoint("TOPLEFT", 174, -78)
 
     -- скрытый fontstring для замеров шрифта сообщений
     logMeasure = logPage:CreateFontString(nil, "BACKGROUND", "GameFontNormalSmall")
@@ -980,20 +981,38 @@ local function BuildLogPage(parent)
     logLineH = max(8, logMeasure:GetStringHeight())
 
     -- свой скроллбар: высоты строк переменные, FauxScrollFrame (фикс. линия) не подходит.
-    -- OnValueChanged шаблона дёргает SetVerticalScroll родителя-скроллфрейма —
-    -- у нас родитель обычный Frame, поэтому скрипт переопределяем целиком.
+    -- ВАЖНО (грабли 3.3.5): шаблон UIPanelScrollBarTemplate при создании уже вешает
+    -- OnValueChanged, который зовёт parent:SetVerticalScroll (родитель у него —
+    -- ScrollFrame, у нас обычный Frame), а его стрелки шагают на пол-высоты слайдера
+    -- В ПИКСЕЛЯХ. Поэтому наш OnValueChanged ставим ДО любых SetMinMaxValues/SetValue
+    -- (иначе первый же SetValue уронит шаблонный обработчик), стартовое SetValue(0)
+    -- не делаем вовсе, а клики стрелок переопределяем на шаг записями.
     logSlider = CreateFrame("Slider", "DTCCWin_LogScroll", logPage, "UIPanelScrollBarTemplate")
     logSlider:SetOrientation("VERTICAL")
     logSlider:SetWidth(16)
     logSlider:SetPoint("TOPRIGHT", logPage, "TOPRIGHT", -10, -LOG_TOP)
     logSlider:SetPoint("BOTTOMRIGHT", logPage, "BOTTOMRIGHT", -10, LOG_BOTTOM)
-    logSlider:SetMinMaxValues(0, 0)
-    logSlider:SetValue(0)
-    logSlider:SetValueStep(1)
-    logSlider:Hide()
     logSlider:SetScript("OnValueChanged", function(self, value)
         SetLogOffset(floor((tonumber(value) or 0) + 0.5))
     end)
+    logSlider:SetValueStep(1)
+    logSlider:SetMinMaxValues(0, 0)
+    logSlider:Hide()
+
+    local upBtn = _G["DTCCWin_LogScrollScrollUpButton"]
+    local downBtn = _G["DTCCWin_LogScrollScrollDownButton"]
+    if upBtn then
+        upBtn:SetScript("OnClick", function()
+            SetLogOffset(logOff - 3)
+            PlaySound("UChatScrollButton")
+        end)
+    end
+    if downBtn then
+        downBtn:SetScript("OnClick", function()
+            SetLogOffset(logOff + 3)
+            PlaySound("UChatScrollButton")
+        end)
+    end
 
     logPage:SetScript("OnMouseWheel", function(_, delta)
         SetLogOffset(logOff - (delta > 0 and 2 or -2))
