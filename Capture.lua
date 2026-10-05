@@ -80,6 +80,19 @@ function DTCC.ExtractPlayerColor(text)
     return strsub(argb, 3)
 end
 
+-- Цвет тега в начале строки — на PikaWoW это ФРАКЦИЯ отправителя:
+-- [|cff3399FFSolo|r] — альянс (синий), [|cffCC0000Solo|r] — орда (красный).
+-- Вариант с цветом перед скобкой тоже учитываем. "RRGGBB" либо nil
+function DTCC.ExtractTagColor(text)
+    text = tostring(text or "")
+    local c = string.match(text, "^%s*%[|c(%x%x%x%x%x%x%x%x)")
+    if not c then
+        c = string.match(text, "^%s*|c(%x%x%x%x%x%x%x%x)%s*%[")
+    end
+    if not c then return nil end
+    return strsub(c, 3)
+end
+
 -- Тег в начале строки ([Solo], [Solo Progress]…), без скобок; nil, если тега
 -- нет. Тег может быть раскрашен: ПЕРЕД скобкой (|cff…[Мир]) или ВНУТРИ неё
 -- (PikaWoW: [|cff3399FFSolo|r]) — оба варианта учитываем
@@ -241,15 +254,16 @@ function DTCC.GetPlayerColor(name)
     return db.factions[DTCC.NameKey(name)]
 end
 
--- meta: { c = "RRGGBB" цвет имени (фракция), ch = имя канала,
---         src = ключ источника ("world" по умолчанию; say/party/guild/whisper) }
+-- meta: { c = "RRGGBB" цвет имени, ch = имя чата (тег/канал),
+--         src = ключ источника ("world" по умолчанию; say/party/guild/whisper),
+--         tc = "RRGGBB" цвет тега чата (фракция на PikaWoW) }
 function DTCC.LogAdd(name, msg, flags, meta)
     meta = meta or {}
     local db = DTCC.db
     if not db or not db.settings.logEnabled then return end
     local log = db.log
     log[#log + 1] = { t = time(), p = name, m = msg, f = flags or 0,
-        c = meta.c, ch = meta.ch, src = meta.src }
+        c = meta.c, ch = meta.ch, src = meta.src, tc = meta.tc }
     -- подрезаем с запасом, чтобы не копировать массив на каждом сообщении
     local limit = tonumber(db.settings.logLimit) or 3000
     if limit > 0 and #log > limit + 50 then
@@ -498,29 +512,40 @@ local function SystemFilter(self, event, text)
             DTCC.Print(DTCC.COLORS.green .. "формат мирового чата распознан — сообщения пишутся в лог|r " ..
                 DTCC.COLORS.grey .. "(/dtcc log)")
         end
-        -- цвет имени (фракция) из самой строки: запоминаем по игроку — чаты
-        -- без ссылки-игрока цвет не передают и берут его из памяти
+        -- цвета из строки: c — как сервер красит НИК (на PikaWoW — белый),
+        -- tc — цвет ТЕГА (фракция: синий альянс / красный орда). В память
+        -- игрока кладём фракционный (теговый) — он и красит ники записей
+        -- без собственного цвета (приваты, группа, гильдия, обычный чат)
         local color = DTCC.ExtractPlayerColor(text)
-        if color then DTCC.RememberPlayerColor(name, color) end
+        local tagColor = DTCC.ExtractTagColor(text)
+        local remembered = tagColor or color
+        if remembered then DTCC.RememberPlayerColor(name, remembered) end
         -- тег строки ([Solo], [Solo Progress]…): если он в настройке «Чаты»,
         -- запись получает собственную галочку-фильтр и тег в логе
         return ProcessChatLine(self, name, bare, prefix,
-            { c = color, ch = DTCC.MatchChatTag(text, s.worldChannel) })
+            { c = color, ch = DTCC.MatchChatTag(text, s.worldChannel), tc = tagColor })
     end
 
     -- Запасной формат для чатов из настройки: «[Тег] Имя: сообщение» без
-    -- ссылки-игрока (PikaWoW так присылает, например, Solo Progress)
+    -- ссылки-игрока (PikaWoW так присылает, например, Solo Progress).
+    -- Тег может быть раскрашен фракцией: [|cffCC0000Solo Progress|r]
     if type(text) == "string" then
         local tag = DTCC.MatchChatTag(text, s.worldChannel)
         if tag then
             local esc = DTCC.PatternEscape(tag)
-            local fname, fmsg = string.match(text,
-                "^%s*%[" .. esc .. "%]%s*([^:|%[]+)%s*:%s*(.-)$")
+            local patColor = "^%s*%[|c%x%x%x%x%x%x%x%x" .. esc ..
+                "|r%]%s*([^:|%[]+)%s*:%s*(.-)$"
+            local patPlain = "^%s*%[" .. esc .. "%]%s*([^:|%[]+)%s*:%s*(.-)$"
+            local fname, fmsg = string.match(text, patColor)
+            if not fname then fname, fmsg = string.match(text, patPlain) end
             fname = fname and DTCC.CleanName(fname) or ""
+            if fmsg then fmsg = StripColorWrap(fmsg) end
             if fname ~= "" and fmsg and fmsg ~= "" then
+                local tagColor = DTCC.ExtractTagColor(text)
+                if tagColor then DTCC.RememberPlayerColor(fname, tagColor) end
                 return ProcessChatLine(self, fname, fmsg,
                     "[" .. tag .. "] " .. fname .. ": ",
-                    { c = DTCC.GetPlayerColor(fname), ch = tag })
+                    { c = DTCC.GetPlayerColor(fname), ch = tag, tc = tagColor })
             end
         end
     end

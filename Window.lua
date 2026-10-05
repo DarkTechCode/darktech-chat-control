@@ -723,11 +723,12 @@ local function LogCountLines(text, lineW)
     return n
 end
 
--- Цветной тег источника перед сообщением: [Solo] (канал, бирюзовый) или
--- [Гильдия]/[Шёпот]/… (локальные чаты, цвет как в игровом чате)
+-- Цветной тег источника перед сообщением: [Solo] красится ФРАКЦИЕЙ
+-- отправителя (e.tc из строки: синий альянс / красный орда на PikaWoW),
+-- без цвета — бирюзовым; локальные чаты — цветами, близкими к игровым
 local function LogEntryTag(e)
     if e.ch and e.ch ~= "" then
-        return "|cff20b2aa[" .. e.ch .. "]|r "
+        return "|cff" .. (e.tc or "20b2aa") .. "[" .. e.ch .. "]|r "
     end
     if e.src and e.src ~= "world" then
         local def = DTCC.sourceBySrc[e.src]
