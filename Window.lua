@@ -1024,6 +1024,10 @@ local function DebugCopyFill()
     local text
     if #lines > 0 then
         text = table.concat(lines, "\n")
+        -- коды экранируем (| → !), как в чат-выводе [debug]: иначе EditBox
+        -- РЕНДЕРИТ |cff/|Hplayer (цветом/ссылками), и скопированный текст
+        -- выходит уже без кодов
+        text = gsub(text, "|", "!")
     else
         text = "(пусто — включите /dtcc debug on и дождитесь сообщений в чатах)"
     end

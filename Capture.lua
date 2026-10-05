@@ -81,7 +81,8 @@ function DTCC.ExtractPlayerColor(text)
 end
 
 -- Тег в начале строки ([Solo], [Solo Progress]…), без скобок; nil, если тега
--- нет (строка может начинаться с цветового кода перед тегом — учитываем)
+-- нет. Тег может быть раскрашен: ПЕРЕД скобкой (|cff…[Мир]) или ВНУТРИ неё
+-- (PikaWoW: [|cff3399FFSolo|r]) — оба варианта учитываем
 function DTCC.ExtractLeadingTag(text)
     text = tostring(text or "")
     local tag = string.match(text, "^%s*%[([^%]]+)%]")
@@ -89,7 +90,10 @@ function DTCC.ExtractLeadingTag(text)
         local stripped = gsub(text, "^%s*|c%x%x%x%x%x%x%x%x%s*", "")
         tag = string.match(stripped, "^%[([^%]]+)%]")
     end
-    tag = tag and strtrim(tag) or nil
+    if not tag then return nil end
+    tag = gsub(tag, "|c%x%x%x%x%x%x%x%x", "")
+    tag = gsub(tag, "|r", "")
+    tag = strtrim(tag)
     if tag == "" then return nil end
     return tag
 end
