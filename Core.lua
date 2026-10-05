@@ -36,6 +36,32 @@ DTCC.COLORS = {
 }
 
 --------------------------------------------------------------------------------
+-- Локальные чаты-источники лога (только логирование, без обработки).
+-- src — ключ записи лога и настройки logShowSources; label — галочка и тег
+-- [Метка] перед сообщением; color — цвет тега (близко к цветам чата игры).
+--------------------------------------------------------------------------------
+
+DTCC.LOCAL_SOURCES = {
+    { src = "say",     label = "Общий",   color = "ffffff",
+      events = { "SAY", "YELL" },
+      tooltip = "Сообщения рядом: /say и крики." },
+    { src = "party",   label = "Группа",  color = "80b3ff",
+      events = { "PARTY", "PARTY_LEADER", "RAID", "RAID_LEADER" },
+      tooltip = "Сообщения группы и рейда (включая лидерские)." },
+    { src = "guild",   label = "Гильдия", color = "40d040",
+      events = { "GUILD", "GUILD_OFFICER" },
+      tooltip = "Сообщения гильдии и офицерского чата." },
+    { src = "whisper", label = "Шёпот",   color = "bf6fef",
+      events = { "WHISPER", "WHISPER_INFORM" },
+      tooltip = "Приватные сообщения: входящие и исходящие\n(исходящие помечены стрелкой →)." },
+}
+
+DTCC.sourceBySrc = {}
+for _, def in ipairs(DTCC.LOCAL_SOURCES) do
+    DTCC.sourceBySrc[def.src] = def
+end
+
+--------------------------------------------------------------------------------
 -- Вывод
 --------------------------------------------------------------------------------
 
@@ -252,6 +278,9 @@ local DEFAULTS = {
         logLimit        = 3000,
         logShowPlayers  = true,   -- фильтр вкладки «Лог»: сообщения мирового чата (.chat)
         logShowRaw      = false,  -- ... RAW-записи (системные строки с игроком)
+        logShowSources  = {       -- ... локальные чаты: say / party / guild / whisper
+            say = true, party = true, guild = true, whisper = true,
+        },
         logFilterFlags  = 0,      -- «только эти типы» (маска флагов; 0 = все типы)
         logChannelShow  = {},     -- ... каналы: [имя канала в нижнем регистре] = bool
                                   --     (nil/true = показывать; галочки на вкладке «Лог»)

@@ -10,11 +10,21 @@ local panel
 -- Диалоги подтверждения
 --------------------------------------------------------------------------------
 
+-- Текст диалога «Очистить лог» формируется при показе (DTCC.RequestClearLog
+-- в Window.lua): удаляются записи, видимые при ТЕКУЩИХ фильтрах
 StaticPopupDialogs["DTCC_CLEAR_LOG"] = {
-    text = "Очистить весь лог мирового чата?",
+    text = "Очистить лог?",
     button1 = "Очистить",
     button2 = "Отмена",
-    OnAccept = function() DTCC.ClearLog() end,
+    OnAccept = function()
+        if DTCC._clearQuery then
+            local n = DTCC.RemoveLogEntries(DTCC._clearQuery)
+            DTCC._clearQuery = nil
+            DTCC.Print("удалено записей по текущим фильтрам: " .. n)
+        else
+            DTCC.ClearLog()
+        end
+    end,
     timeout = 0, whileDead = 1, hideOnEscape = 1,
 }
 

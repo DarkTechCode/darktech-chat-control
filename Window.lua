@@ -630,6 +630,8 @@ local logFlagChecks = {}   -- { { cb = .., flag = .. } } — маска «тол
 local logChannelChecks = {} -- { { cb = .., key = .., label = .. } } — галочки каналов
                            -- (динамика по настройке «Каналы»; key = имя в нижнем
                            -- регистре, nil = галочка скрыта)
+local logSourceChecks = {} -- { { cb = .., key = .. } } — локальные чаты
+                           -- (Общий/Группа/Гильдия/Шёпот, DTCC.LOCAL_SOURCES)
 local logPeriodValue = 0
 local logTotal = 0
 local logOff = 0           -- индекс первой видимой записи (0-based, сверху)
@@ -721,13 +723,34 @@ local function LogCountLines(text, lineW)
     return n
 end
 
+-- Цветной тег источника перед сообщением: [Solo] (канал, бирюзовый) или
+-- [Гильдия]/[Шёпот]/… (локальные чаты, цвет как в игровом чате)
+local function LogEntryTag(e)
+    if e.ch and e.ch ~= "" then
+        return "|cff20b2aa[" .. e.ch .. "]|r "
+    end
+    if e.src and e.src ~= "world" then
+        local def = DTCC.sourceBySrc[e.src]
+        if def then return "|cff" .. def.color .. "[" .. def.label .. "]|r " end
+    end
+    return ""
+end
+
+-- Тот же тег без кодов цвета — для замера высоты строки
+local function LogBareTag(e)
+    if e.ch and e.ch ~= "" then
+        return "[" .. e.ch .. "] "
+    end
+    if e.src and e.src ~= "world" then
+        local def = DTCC.sourceBySrc[e.src]
+        if def then return "[" .. def.label .. "] " end
+    end
+    return ""
+end
+
 -- «Голый» текст записи для замера высоты: тег канала + сообщение без кодов
 local function LogBareText(e)
-    local m = DTCC.StripAll(e.m or "")
-    if e.ch and e.ch ~= "" then
-        return "[" .. e.ch .. "] " .. m
-    end
-    return m
+    return LogBareTag(e) .. DTCC.StripAll(e.m or "")
 end
 
 -- Высота строки лога: перенос сообщения в несколько строк + запас.
@@ -815,11 +838,7 @@ LogRenderInner = function()
                 row.smf:SetWidth(msgW)
                 row.smfEntry, row.smfW = e, msgW
                 pcall(row.smf.Clear, row.smf)
-                local text = tostring(e.m or "")
-                if e.ch and e.ch ~= "" then
-                    text = "|cff20b2aa[" .. e.ch .. "]|r " .. text
-                end
-                row.smf:AddMessage(text, 0.92, 0.92, 0.92)
+                row.smf:AddMessage(LogEntryTag(e) .. tostring(e.m or ""), 0.92, 0.92, 0.92)
             end
             row.smf:SetHeight(msgH)
             row:Show()
@@ -846,7 +865,7 @@ local function SetLogOffset(v)
 end
 
 -- Текущее состояние фильтров из галочек: источники (мировой чат / каналы /
--- RAW) и маска типов
+-- локальные чаты / RAW) и маска типов
 local function LogFilterState()
     local players = logCheckboxes.players and logCheckboxes.players:GetChecked() and true or false
     local raw = logCheckboxes.raw and logCheckboxes.raw:GetChecked() and true or false
@@ -860,37 +879,55 @@ local function LogFilterState()
             channels[cc.key] = cc.cb:GetChecked() and true or false
         end
     end
-    return players, raw, flags, channels
+    local sources = { world = players }
+    for _, sc in ipairs(logSourceChecks) do
+        if sc.cb and sc.key then
+            sources[sc.key] = sc.cb:GetChecked() and true or false
+        end
+    end
+    return players, raw, flags, channels, sources
 end
 
-local function LogSearch()
-    local players, raw, flags, channels = LogFilterState()
-    local res, total = DTCC.LogSearch({
+-- Параметры запроса к логу по текущему состоянию вкладки: галочки-источники,
+-- типы, поиск и период. Используются и для показа, и для «Очистить лог» —
+-- кнопка удаляет ровно то, что сейчас видно
+local function BuildLogOpts()
+    local _, raw, flags, channels, sources = LogFilterState()
+    return {
         text = logTextEdit:GetText(),
         name = logNameEdit:GetText(),
         minT = ComputeMinT(logPeriodValue),
         flags = flags,
         channels = channels,
-        includePlayers = players,
+        sources = sources,
         includeRaw = raw,
-    })
+    }
+end
+
+local function LogSearch()
+    local res, total = DTCC.LogSearch(BuildLogOpts())
     logItems = res
     logTotal = total
-    local anyChannel = false
+    local anySource = false
+    local _, raw, _, channels, sources = LogFilterState()
+    if raw then anySource = true end
     for _, on in pairs(channels) do
-        if on then anyChannel = true break end
+        if on then anySource = true break end
     end
-    return players, raw, anyChannel
+    for _, on in pairs(sources) do
+        if on then anySource = true break end
+    end
+    return anySource
 end
 
 local function LogRefresh()
     if not window or not window:IsShown() or currentTab ~= 3 then return end
     if not logRows or not logTextEdit then return end
-    local players, raw, anyChannel = LogSearch()
+    local anySource = LogSearch()
 
     local inLog = (DTCC.db and DTCC.db.log) and #DTCC.db.log or 0
-    if not players and not raw and not anyChannel then
-        logCountLabel:SetText("Все источники выключены — отметьте «Мировой чат», канал или «RAW»")
+    if not anySource then
+        logCountLabel:SetText("Все источники выключены — отметьте хотя бы один")
     elseif logTotal == 0 then
         if inLog == 0 then
             logCountLabel:SetText("Найдено: 0 / в логе: 0   |cff909090(если сообщения не попадают в лог — /dtcc debug on и напишите в чат)|r")
@@ -904,6 +941,27 @@ local function LogRefresh()
     LogRender()
 end
 
+-- Смена фильтра/поиска/периода: показываем самые свежие записи (сверху),
+-- прокрутка не остаётся где-то в глубине истории
+local function LogFilterChanged()
+    logOff = 0
+    LogRefresh()
+end
+
+-- «Очистить лог» по текущим фильтрам: запрос запоминается до подтверждения,
+-- диалог показывает, сколько записей подпадает
+function DTCC.RequestClearLog()
+    local opts = BuildLogOpts()
+    local _, total = DTCC.LogSearch(opts)
+    DTCC._clearQuery = DTCC.PrepareLogQuery(opts)
+    local d = StaticPopupDialogs and StaticPopupDialogs["DTCC_CLEAR_LOG"]
+    if d then
+        d.text = "Удалить из лога записи по ТЕКУЩИМ фильтрам?\nПодходит: " .. total ..
+            " из " .. ((DTCC.db and #DTCC.db.log) or 0) .. " записей лога."
+    end
+    StaticPopup_Show("DTCC_CLEAR_LOG")
+end
+
 local function LogTooltip(self)
     local e = self.entry
     if not e then return end
@@ -912,6 +970,8 @@ local function LogTooltip(self)
     GameTooltip:AddLine(e.p .. "  —  " .. DTCC.FormatDateFull(e.t), 0.85, 0.9, 1)
     if e.ch and e.ch ~= "" then
         GameTooltip:AddLine("Канал: " .. e.ch, 0.6, 0.8, 0.9)
+    elseif e.src and e.src ~= "world" and DTCC.sourceBySrc[e.src] then
+        GameTooltip:AddLine("Источник: " .. DTCC.sourceBySrc[e.src].label, 0.6, 0.8, 0.9)
     end
     local flags = e.f or 0
     local desc = {}
@@ -942,6 +1002,9 @@ local function LogLayoutChecks()
     add(logCheckboxes.players)
     for _, cc in ipairs(logChannelChecks) do
         if cc.key then add(cc.cb) end
+    end
+    for _, sc in ipairs(logSourceChecks) do
+        add(sc.cb)
     end
     add(logCheckboxes.raw)
     for _, ckey in ipairs({ "friend", "bl", "hidden", "censor", "autobl" }) do
@@ -999,7 +1062,7 @@ local function LogRebuildChannelChecks()
                         DTCC.db.settings.logChannelShow[cc.key] = v
                     end
                     DTCC.FireEvent("SettingsChanged")
-                    LogRefresh()
+                    LogFilterChanged()
                 end)
             logChannelChecks[i] = cc
         end
@@ -1046,19 +1109,19 @@ local function BuildLogPage(parent)
     -- строка 1: поиск по тексту/игроку, период, поиск; справа — очистка лога
     local lbl1 = MakeLabel(logPage, "Текст:", "GameFontNormalSmall")
     lbl1:SetPoint("TOPLEFT", 6, -6)
-    logTextEdit = MakeEdit(logPage, 110, function() LogRefresh() end)
+    logTextEdit = MakeEdit(logPage, 110, function() LogFilterChanged() end)
     logTextEdit:SetPoint("TOPLEFT", 52, -4)
 
     local lbl2 = MakeLabel(logPage, "Игрок:", "GameFontNormalSmall")
     lbl2:SetPoint("TOPLEFT", 172, -6)
-    logNameEdit = MakeEdit(logPage, 90, function() LogRefresh() end)
+    logNameEdit = MakeEdit(logPage, 90, function() LogFilterChanged() end)
     logNameEdit:SetPoint("TOPLEFT", 220, -4)
 
     logPeriodDD = MakeDropdown(logPage, PERIODS,
         function() return logPeriodValue end,
         function(v)
             logPeriodValue = v
-            LogRefresh()
+            LogFilterChanged()
         end,
         100, "DTCCWin_LogPeriod")
     logPeriodDD:SetPoint("TOPLEFT", 318, -6)
@@ -1067,13 +1130,13 @@ local function BuildLogPage(parent)
     searchBtn:SetPoint("TOPLEFT", 428, -4)
 
     local clearBtn = MakeButton(logPage, "Очистить лог", 100, function()
-        StaticPopup_Show("DTCC_CLEAR_LOG")
+        DTCC.RequestClearLog()
     end, "DTCCWin_LogClear")
     clearBtn:SetPoint("TOPRIGHT", logPage, "TOPRIGHT", -8, -4)
     clearBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:SetText("Очистить лог", 0.95, 0.95, 0.95)
-        GameTooltip:AddLine("Полностью удаляет все записи лога (с подтверждением).", nil, nil, nil, 1)
+        GameTooltip:SetText("Очистить лог (по фильтрам)", 0.95, 0.95, 0.95)
+        GameTooltip:AddLine("Удаляет только записи, видимые при текущих фильтрах\n(галочки источников, поиск, период). Остальное сохраняется.", nil, nil, nil, 1)
         GameTooltip:Show()
     end)
     clearBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -1084,7 +1147,7 @@ local function BuildLogPage(parent)
         local cb = DTCC.UI.Check(logPage, labelText, tooltip, function(v)
             if DTCC.db then DTCC.db.settings[settingKey] = v end
             DTCC.FireEvent("SettingsChanged")
-            LogRefresh()
+            LogFilterChanged()
         end)
         if DTCC.db then cb:SetChecked(DTCC.db.settings[settingKey]) end
         logCheckboxes[ckey] = cb
@@ -1096,12 +1159,29 @@ local function BuildLogPage(parent)
     SourceCheck("logShowRaw", "raw", "RAW",
         "RAW-записи: системные строки со ссылкой игрока (входы, достижения,\nлут и другой мусор в нестандартном формате), записанные как есть.")
 
+    -- локальные чаты: Общий/Группа/Гильдия/Шёпот (только логируются)
+    for _, def in ipairs(DTCC.LOCAL_SOURCES) do
+        local src = def.src
+        local cb = DTCC.UI.Check(logPage, def.label, def.tooltip, function(v)
+            if DTCC.db then
+                DTCC.db.settings.logShowSources = DTCC.db.settings.logShowSources or {}
+                DTCC.db.settings.logShowSources[src] = v
+            end
+            DTCC.FireEvent("SettingsChanged")
+            LogFilterChanged()
+        end)
+        if DTCC.db then
+            cb:SetChecked(DTCC.db.settings.logShowSources[src] ~= false)
+        end
+        logSourceChecks[#logSourceChecks + 1] = { cb = cb, key = src }
+    end
+
     local function FlagCheck(key, flag, labelText, tooltip)
         local cb = DTCC.UI.Check(logPage, labelText, tooltip, function()
             local _, _, mask = LogFilterState()
             if DTCC.db then DTCC.db.settings.logFilterFlags = mask end
             DTCC.FireEvent("SettingsChanged")
-            LogRefresh()
+            LogFilterChanged()
         end)
         if DTCC.db then
             cb:SetChecked(bit.band(tonumber(DTCC.db.settings.logFilterFlags) or 0, flag) ~= 0)
@@ -1710,6 +1790,9 @@ DTCC.RegisterCallback("OnInitialized", BuildWindow)
 
 local lastLogRefresh = 0
 DTCC.RegisterCallback("LogChanged", function()
+    -- записей могло стать меньше (очистка по фильтрам) — кэш высот держит
+    -- ссылки на удалённые записи, сбрасываем и перемеряем лениво
+    wipe(logHeightCache)
     -- обновляем вкладку лога не чаще раза в секунду и только когда она открыта
     if window and window:IsShown() and currentTab == 3 then
         local now = GetTime()

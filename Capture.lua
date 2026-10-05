@@ -20,6 +20,11 @@
     «Solo, Solo Progress»). Сообщения каждого канала проходят полный конвейер
     (цензура/ЧС/лог) и помечаются в логе именем канала (поле ch).
 
+    Локальные чаты (say/крик, группа/рейд, гильдия, приват) ТОЛЬКО логируются
+    (поле src, список источников DTCC.LOCAL_SOURCES в Core.lua): без цензуры,
+    авто-ЧС и скрытия — сообщения группы/гильдии должны оставаться читаемыми.
+    Флаги ЧС/друзей ставятся, чтобы типы-фильтры лога работали и по ним.
+
     Цвет автора: сервер красит имена в мировом чате по фракции (|cff… перед
     |Hplayer:). Цвет извлекается, пишется в запись лога и запоминается по
     игроку (db.factions) — сообщения каналов, которые цвет сами не передают,
@@ -203,13 +208,15 @@ function DTCC.GetPlayerColor(name)
     return db.factions[DTCC.NameKey(name)]
 end
 
--- color — "RRGGBB" цвета имени (фракция), channel — имя канала для записей
--- из CHAT_MSG_CHANNEL (у сообщений .chat поле не пишется).
-function DTCC.LogAdd(name, msg, flags, color, channel)
+-- meta: { c = "RRGGBB" цвет имени (фракция), ch = имя канала,
+--         src = ключ источника ("world" по умолчанию; say/party/guild/whisper) }
+function DTCC.LogAdd(name, msg, flags, meta)
+    meta = meta or {}
     local db = DTCC.db
     if not db or not db.settings.logEnabled then return end
     local log = db.log
-    log[#log + 1] = { t = time(), p = name, m = msg, f = flags or 0, c = color, ch = channel }
+    log[#log + 1] = { t = time(), p = name, m = msg, f = flags or 0,
+        c = meta.c, ch = meta.ch, src = meta.src }
     -- подрезаем с запасом, чтобы не копировать массив на каждом сообщении
     local limit = tonumber(db.settings.logLimit) or 3000
     if limit > 0 and #log > limit + 50 then
@@ -229,60 +236,87 @@ function DTCC.ClearLog()
     DTCC.FireEvent("LogChanged")
 end
 
--- Поиск по логу. opts: { text, name, minT, flags, channels, includePlayers, includeRaw }.
---   flags — совпадение с любым из указанных битов (0 = любой тип; RAW не касается);
---   channels — таблица «ключ канала (нижний регистр) -> bool»: записи каналов
---     показываются, только если значение не false (nil = каналы не фильтровать);
---   includePlayers/includeRaw — источники: сообщения мирового чата (.chat) и
---     RAW-записи. nil = источник включён.
--- Возвращает (результат-новые-сверху, всего найдено).
+-- Подготовка запроса к логу (общая для поиска и удаления по фильтрам).
+-- opts: { text, name, minT, flags, channels, sources, includeRaw }.
+--   channels — «ключ канала (lower) -> bool»: записи каналов видны,
+--     только если значение не false;
+--   sources — «ключ источника -> bool» (world/say/party/guild/whisper):
+--     nil = источники не фильтровать;
+--   includeRaw — RAW-записи (nil = включены);
+--   flags — совпадение с любым из битов (0 = любой тип; RAW не касается);
+--   text/name — подстрока (без учёта регистра), minT — минимум по времени.
+function DTCC.PrepareLogQuery(opts)
+    opts = opts or {}
+    local q = {}
+    q.text = opts.text and DTCC.utf8lower(strtrim(opts.text)) or ""
+    q.name = opts.name and DTCC.utf8lower(strtrim(opts.name)) or ""
+    q.minT = opts.minT or 0
+    q.flags = opts.flags or 0
+    q.channels = opts.channels
+    q.sources = opts.sources
+    q.includeRaw = opts.includeRaw
+    if q.includeRaw == nil then q.includeRaw = true end
+    return q
+end
+
+-- Подходит ли запись под подготовленный запрос (q из PrepareLogQuery)
+function DTCC.LogEntryMatches(e, q)
+    if not e then return false end
+    if e.t and q.minT > 0 and e.t < q.minT then return false end
+    local isRaw = bit.band(e.f or 0, DTCC.FLAG_RAW) ~= 0
+    local ok
+    if isRaw then
+        ok = q.includeRaw
+    elseif e.ch and q.channels ~= nil then
+        ok = q.channels[DTCC.utf8lower(e.ch)] ~= false
+    else
+        ok = q.sources == nil or q.sources[e.src or "world"] ~= false
+    end
+    if ok and not isRaw and q.flags ~= 0 then
+        ok = bit.band(e.f or 0, q.flags) ~= 0
+    end
+    if ok and q.text ~= "" then
+        ok = string.find(DTCC.utf8lower(tostring(e.m or "")), q.text, 1, true) ~= nil
+    end
+    if ok and q.name ~= "" then
+        ok = string.find(DTCC.utf8lower(tostring(e.p or "")), q.name, 1, true) ~= nil
+    end
+    return ok
+end
+
+-- Поиск по логу: возвращает (результат-новые-сверху, всего найдено)
 function DTCC.LogSearch(opts)
     local db = DTCC.db
     if not db then return {}, 0 end
-    opts = opts or {}
-
-    local textF = opts.text and DTCC.utf8lower(strtrim(opts.text)) or ""
-    local nameF = opts.name and DTCC.utf8lower(strtrim(opts.name)) or ""
-    local minT = opts.minT or 0
-    local needFlags = opts.flags or 0
-    local channels = opts.channels
-    local includePlayers = opts.includePlayers
-    local includeRaw = opts.includeRaw
-    if includePlayers == nil then includePlayers = true end
-    if includeRaw == nil then includeRaw = true end
-
+    local q = DTCC.PrepareLogQuery(opts)
     local res, total = {}, 0
     local log = db.log
     for i = #log, 1, -1 do
-        local e = log[i]
-        if e and (not e.t or e.t >= minT) then
-            local isRaw = bit.band(e.f or 0, DTCC.FLAG_RAW) ~= 0
-            local ok
-            if isRaw then
-                ok = includeRaw
-            elseif e.ch and channels ~= nil then
-                ok = channels[DTCC.utf8lower(e.ch)] ~= false
-            else
-                ok = includePlayers
-            end
-            if ok and not isRaw then
-                ok = needFlags == 0 or bit.band(e.f or 0, needFlags) ~= 0
-            end
-            if ok and textF ~= "" then
-                ok = string.find(DTCC.utf8lower(tostring(e.m or "")), textF, 1, true) ~= nil
-            end
-            if ok and nameF ~= "" then
-                ok = string.find(DTCC.utf8lower(tostring(e.p or "")), nameF, 1, true) ~= nil
-            end
-            if ok then
-                total = total + 1
-                if total <= 3000 then
-                    res[#res + 1] = e
-                end
-            end
+        if DTCC.LogEntryMatches(log[i], q) then
+            total = total + 1
+            if total <= 3000 then res[#res + 1] = log[i] end
         end
     end
     return res, total
+end
+
+-- Удалить записи, подходящие под запрос (кнопка «Очистить лог» работает
+-- по текущим фильтрам). Возвращает число удалённых.
+function DTCC.RemoveLogEntries(opts)
+    local db = DTCC.db
+    if not db then return 0 end
+    local q = DTCC.PrepareLogQuery(opts)
+    local keep, removed = {}, 0
+    for _, e in ipairs(db.log) do
+        if DTCC.LogEntryMatches(e, q) then
+            removed = removed + 1
+        else
+            keep[#keep + 1] = e
+        end
+    end
+    if removed > 0 then db.log = keep end
+    DTCC.FireEvent("LogChanged")
+    return removed
 end
 
 --------------------------------------------------------------------------------
@@ -303,8 +337,8 @@ end
 -- Общий конвейер обработки сообщения мирового чата
 --------------------------------------------------------------------------------
 
--- color/ch пробрасываются в лог (цвет имени-фракции, имя канала)
-local function ProcessChatLine(self, name, bare, prefix, color, channel)
+-- color/ch/src пробрасываются в лог через meta (см. LogAdd)
+local function ProcessChatLine(self, name, bare, prefix, meta)
     local db = DTCC.db
     if not db then return end
     local s = db.settings
@@ -348,7 +382,7 @@ local function ProcessChatLine(self, name, bare, prefix, color, channel)
         or (censored and s.censorMode == "HIDE") then
         flags = flags + DTCC.FLAG_HIDDEN
     end
-    DTCC.LogAdd(name, bare, flags, color, channel)
+    DTCC.LogAdd(name, bare, flags, meta)
 
     ------------------------------------------------------------------ ЧС: скрыть
     if blEntry and s.hideBlacklisted then
@@ -421,7 +455,7 @@ local function SystemFilter(self, event, text)
         -- цвет не передают и берут его из памяти
         local color = DTCC.ExtractPlayerColor(text)
         if color then DTCC.RememberPlayerColor(name, color) end
-        return ProcessChatLine(self, name, bare, prefix, color)
+        return ProcessChatLine(self, name, bare, prefix, { c = color })
     end
 
     -- Уровень 3 (сырой): строка со ссылкой на игрока, но нестандартного вида.
@@ -433,7 +467,7 @@ local function SystemFilter(self, event, text)
         if rawName ~= "" and rawMsg ~= "" then
             local rawColor = DTCC.ExtractPlayerColor(text)
             if rawColor then DTCC.RememberPlayerColor(rawName, rawColor) end
-            DTCC.LogAdd(rawName, rawMsg, DTCC.FLAG_RAW, rawColor)
+            DTCC.LogAdd(rawName, rawMsg, DTCC.FLAG_RAW, { c = rawColor })
             if s.debug then
                 DTCC.Print(DTCC.COLORS.yellow .. "[debug] формат не распознан, " ..
                     "записано в лог как RAW: " .. DTCC.DebugEscape(text))
@@ -487,10 +521,59 @@ local function ChannelFilter(self, event, msg, sender, lang, chanWithNumber)
         "|h|cffFFFFFF" .. name .. "|h|r: "
     -- цвет автора каналы не передают: берём запомненный из мирового чата (.chat)
     return ProcessChatLine(self, name, tostring(msg or ""), prefix,
-        DTCC.GetPlayerColor(name), chanName)
+        { c = DTCC.GetPlayerColor(name), ch = chanName })
 end
 
 ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", ChannelFilter)
+
+--------------------------------------------------------------------------------
+-- Локальные чаты (say/крик, группа/рейд, гильдия, приват): ТОЛЬКО логирование.
+-- Без цензуры/авто-ЧС/скрытия — сообщения группы и гильдии обязаны оставаться
+-- читаемыми; флаги ЧС/друзей ставим, чтобы типы-фильтры лога работали и тут.
+--------------------------------------------------------------------------------
+
+local localChatByEvent = {}
+for _, def in ipairs(DTCC.LOCAL_SOURCES) do
+    for _, ev in ipairs(def.events) do
+        localChatByEvent["CHAT_MSG_" .. ev] = def
+    end
+end
+
+local function LocalChatFilter(self, event, msg, sender)
+    local db = DTCC.db
+    if not db then return end
+    local s = db.settings
+    local def = localChatByEvent[event]
+    if not def then return end
+
+    if s.debug then
+        DTCC.Print(DTCC.COLORS.grey .. "[debug] ЛОКАЛЬНЫЙ [" .. def.label .. "] " ..
+            tostring(sender or "?") .. ": " .. DTCC.DebugEscape(msg))
+    end
+
+    if not s.enabled or not s.logEnabled then return end
+
+    local name = DTCC.CleanName(tostring(sender or ""))
+    if name == "" then return end
+
+    local flags = 0
+    if DTCC.Friends_Get(name) then flags = flags + DTCC.FLAG_FRIEND end
+    if DTCC.Blacklist_Get(name) then flags = flags + DTCC.FLAG_BLACKLIST end
+
+    local text = tostring(msg or "")
+    if event == "CHAT_MSG_WHISPER_INFORM" then
+        text = "→ " .. text -- исходящий приват: стрелка отличает его от входящего
+    end
+
+    DTCC.LogAdd(name, text, flags, { c = DTCC.GetPlayerColor(name), src = def.src })
+    return nil -- отображение в чате не трогаем никогда
+end
+
+for _, def in ipairs(DTCC.LOCAL_SOURCES) do
+    for _, ev in ipairs(def.events) do
+        ChatFrame_AddMessageEventFilter("CHAT_MSG_" .. ev, LocalChatFilter)
+    end
+end
 
 -- Фильтры чата в 3.3.5 останавливаются на первом вернувшем true: переносим
 -- наши фильтры в начало списка, чтобы никакой аддон не перехватил событие раньше.
