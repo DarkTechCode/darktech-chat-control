@@ -1724,11 +1724,12 @@ local function BuildLogPage(parent)
                 SetItemRef(link, text, button, self)
             end
         end)
-        -- тултип при наведении на предмет: OnHyperlinkEnter появился после 3.3.5,
-        -- подключаем через pcall — старый клиент просто не будет его звать
+        -- тултип при наведении на предмет/ачивку: OnHyperlinkEnter появился
+        -- после 3.3.5, подключаем через pcall — старый клиент не будет его звать
         pcall(smf.SetScript, smf, "OnHyperlinkEnter", function(self, link)
             local kind = strsplit(":", tostring(link or ""))
-            if kind == "item" or kind == "enchant" or kind == "spell" or kind == "quest" then
+            if kind == "item" or kind == "enchant" or kind == "spell"
+                or kind == "quest" or kind == "achievement" then
                 GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
                 GameTooltip:SetHyperlink(link)
                 GameTooltip:Show()
