@@ -532,31 +532,29 @@ local function SystemFilter(self, event, text)
     -- Запасной формат для чатов из настройки: «[Тег] Имя: сообщение» без
     -- ссылки-игрока (PikaWoW так присылает, например, Solo Progress).
     -- Тег может быть раскрашен фракцией: [|cffCC0000Solo Progress|r]
-    if type(text) == "string" then
-        local tag = DTCC.MatchChatTag(text, s.worldChannel)
-        if tag then
-            local esc = DTCC.PatternEscape(tag)
-            local patColor = "^%s*%[|c%x%x%x%x%x%x%x%x" .. esc ..
-                "|r%]%s*([^:|%[]+)%s*:%s*(.-)$"
-            local patPlain = "^%s*%[" .. esc .. "%]%s*([^:|%[]+)%s*:%s*(.-)$"
-            local fname, fmsg = string.match(text, patColor)
-            if not fname then fname, fmsg = string.match(text, patPlain) end
-            fname = fname and DTCC.CleanName(fname) or ""
-            if fmsg then fmsg = StripColorWrap(fmsg) end
-            if fname ~= "" and fmsg and fmsg ~= "" then
-                local tagColor = DTCC.ExtractTagColor(text)
-                if tagColor then DTCC.RememberPlayerColor(fname, tagColor) end
-                return ProcessChatLine(self, fname, fmsg,
-                    "[" .. tag .. "] " .. fname .. ": ",
-                    { c = DTCC.GetPlayerColor(fname), ch = tag, tc = tagColor })
-            end
+    local tag = DTCC.MatchChatTag(text, s.worldChannel)
+    if tag then
+        local esc = DTCC.PatternEscape(tag)
+        local patColor = "^%s*%[|c%x%x%x%x%x%x%x%x" .. esc ..
+            "|r%]%s*([^:|%[]+)%s*:%s*(.-)$"
+        local patPlain = "^%s*%[" .. esc .. "%]%s*([^:|%[]+)%s*:%s*(.-)$"
+        local fname, fmsg = string.match(text, patColor)
+        if not fname then fname, fmsg = string.match(text, patPlain) end
+        fname = fname and DTCC.CleanName(fname) or ""
+        if fmsg then fmsg = StripColorWrap(fmsg) end
+        if fname ~= "" and fmsg and fmsg ~= "" then
+            local tagColor = DTCC.ExtractTagColor(text)
+            if tagColor then DTCC.RememberPlayerColor(fname, tagColor) end
+            return ProcessChatLine(self, fname, fmsg,
+                "[" .. tag .. "] " .. fname .. ": ",
+                { c = DTCC.GetPlayerColor(fname), ch = tag, tc = tagColor })
         end
     end
 
     -- Уровень 3 (сырой): строка со ссылкой на игрока, но нестандартного вида.
     -- Пишем в лог как есть (метка RAW) — БЕЗ цензуры, скрытия и авто-ЧС,
     -- чтобы необработанная строка не могла дать побочных эффектов.
-    if type(text) == "string" and string.find(text, "|Hplayer:", 1, true) then
+    if text and string.find(text, "|Hplayer:", 1, true) then
         local rawName = DTCC.CleanName(string.match(text, "|Hplayer:([^|]+)|h") or "")
         local rawMsg = strtrim(DTCC.StripAll(text))
         if rawName ~= "" and rawMsg ~= "" then

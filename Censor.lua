@@ -67,57 +67,6 @@ function DTCC.Censor_SetWords(list)
     return #clean
 end
 
--- Быстрое добавление слов (без перезаписи всего списка). true — что-то добавлено.
-function DTCC.CensorWords_Add(raw)
-    if not DTCC.db then return false end
-    local words = DTCC.db.settings.censorWords
-    if type(words) ~= "table" then words = {} end
-    local added = false
-    for _, raw2 in ipairs(SplitWords({ raw })) do
-        local w = DTCC.utf8lower(strtrim(raw2))
-        if w ~= "" then
-            local exists = false
-            for _, ex in ipairs(words) do
-                if ex == w then exists = true break end
-            end
-            if not exists then
-                tinsert(words, w)
-                added = true
-            end
-        end
-    end
-    if added then
-        table.sort(words)
-        DTCC.db.settings.censorWords = words
-        DTCC.RebuildCensorCache()
-    end
-    return added
-end
-
--- Удалить слово (точное совпадение без учёта регистра). true — удалено.
-function DTCC.CensorWords_Remove(word)
-    if not DTCC.db then return false end
-    local words = DTCC.db.settings.censorWords
-    if type(words) ~= "table" then return false end
-    local target = DTCC.utf8lower(strtrim(tostring(word or "")))
-    for i, w in ipairs(words) do
-        if w == target then
-            tremove(words, i)
-            DTCC.RebuildCensorCache()
-            return true
-        end
-    end
-    return false
-end
-
--- Отсортированный список слов для UI.
-function DTCC.Censor_GetWords()
-    if not DTCC.db or type(DTCC.db.settings.censorWords) ~= "table" then
-        return {}
-    end
-    return DTCC.db.settings.censorWords
-end
-
 -- Список слов, как строка для редактора (одно слово на строку).
 function DTCC.Censor_GetWordsAsString()
     if not DTCC.db then return "" end

@@ -11,7 +11,8 @@ local panel
 --------------------------------------------------------------------------------
 
 -- Текст диалога «Очистить лог» формируется при показе (DTCC.RequestClearLog
--- в Window.lua): удаляются записи, видимые при ТЕКУЩИХ фильтрах
+-- в Window.lua): из окна лога — удаляются записи, видимые при ТЕКУЩИХ
+-- фильтрах; из панели настроек (all=true) — полная очистка
 StaticPopupDialogs["DTCC_CLEAR_LOG"] = {
     text = "Очистить лог?",
     button1 = "Очистить",
@@ -159,8 +160,6 @@ local function BuildPanel()
     local content = CreateFrame("Frame", nil, scroll)
     content:SetWidth(540)
     scroll:SetScrollChild(content)
-
-    local s -- = DTCC.db.settings (в Refresh)
 
     local CY = -10
     local function Advance(dy) CY = CY - dy end
@@ -338,7 +337,8 @@ local function BuildPanel()
     btnOpenLog:SetPoint("TOPLEFT", 10, CY)
 
     local btnClearLog = NewButton(content, "Очистить лог", 110, function()
-        StaticPopup_Show("DTCC_CLEAR_LOG")
+        -- полная очистка: не подхватывать фильтр-запрос от окна лога
+        DTCC.RequestClearLog(true)
     end)
     btnClearLog:SetPoint("LEFT", btnOpenLog, "RIGHT", 8, 0)
     Advance(32)
@@ -534,7 +534,7 @@ local function BuildPanel()
     ---------------------------------------------------------------- синхронизация
     local function Refresh()
         if not DTCC.db then return end
-        s = DTCC.db.settings
+        local s = DTCC.db.settings
         cbEnabled:SetChecked(s.enabled)
         cbHideBL:SetChecked(s.hideBlacklisted)
         cbPlaceholder:SetChecked(s.showPlaceholder)

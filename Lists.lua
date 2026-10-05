@@ -221,10 +221,3 @@ function DTCC.Friends_GetSorted()
     end)
     return list
 end
-
-function DTCC.Friends_Count()
-    if not DTCC.db then return 0 end
-    local n = 0
-    for _ in pairs(DTCC.db.friends) do n = n + 1 end
-    return n
-end

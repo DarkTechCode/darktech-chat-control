@@ -138,8 +138,6 @@ end
 -- Контекстное меню (общее для всех вкладок), своё всплывающее меню
 --------------------------------------------------------------------------------
 
-local menuCtx
-
 local function MenuDescriptor(ctx)
     local items = {}
     if not ctx then return items end
@@ -343,7 +341,6 @@ local function MenuDescriptor(ctx)
 end
 
 local function ShowMenu(ctx)
-    menuCtx = ctx
     DTCC.UI.PopupMenu(MenuDescriptor(ctx))
 end
 
@@ -716,8 +713,8 @@ end
 -- Вкладка «Лог»
 --
 -- Фильтры — галочки в ОДИН ряд, перенос на следующую строку только когда
--- не помещаются (источники идут первыми: «Мировой чат», галочки каналов из
--- настройки «Каналы» (Solo, Solo Progress…, строятся динамически), «RAW»;
+-- не помещаются (источники идут первыми: «Мировой чат», галочки чатов из
+-- настройки «Чаты» (Solo, Solo Progress…, строятся динамически), «RAW»;
 -- затем типы ЧС/скрытые/цензура/авто-ЧС/друзья — не отмечено ничего =
 -- любой тип, несколько отмеченных складываются как «ИЛИ»). Шрифт записей —
 -- как в игровом чате (крупнее мелкого UI-шрифта). Имя автора окрашено
@@ -736,8 +733,8 @@ local logTextEdit, logNameEdit, logPeriodDD, logCountLabel
 local logSlider
 local logCheckboxes = {}   -- players / raw / bl / hidden / censor / autobl / friend
 local logFlagChecks = {}   -- { { cb = .., flag = .. } } — маска «только эти типы»
-local logChannelChecks = {} -- { { cb = .., key = .., label = .. } } — галочки каналов
-                           -- (динамика по настройке «Каналы»; key = имя в нижнем
+local logChannelChecks = {} -- { { cb = .., key = .., label = .. } } — галочки чатов
+                           -- (динамика по настройке «Чаты»; key = имя в нижнем
                            -- регистре, nil = галочка скрыта)
 local logSourceChecks = {} -- { { cb = .., key = .. } } — локальные чаты
                            -- (Общий/Группа/Гильдия/Шёпот, DTCC.LOCAL_SOURCES)
@@ -1130,15 +1127,24 @@ local function LogSyncAllCheck()
 end
 
 -- «Очистить лог» по текущим фильтрам: запрос запоминается до подтверждения,
--- диалог показывает, сколько записей подпадает
-function DTCC.RequestClearLog()
-    local opts = BuildLogOpts()
-    local _, total = DTCC.LogSearch(opts)
-    DTCC._clearQuery = DTCC.PrepareLogQuery(opts)
+-- диалог показывает, сколько записей подпадает. all=true — полная очистка
+-- (кнопка в панели настроек): фильтр-запрос явно отменяется, иначе в диалог
+-- настроек подтекал бы протухший запрос отменённого диалога окна лога
+function DTCC.RequestClearLog(all)
     local d = StaticPopupDialogs and StaticPopupDialogs["DTCC_CLEAR_LOG"]
-    if d then
-        d.text = "Удалить из лога записи по ТЕКУЩИМ фильтрам?\nПодходит: " .. total ..
-            " из " .. ((DTCC.db and #DTCC.db.log) or 0) .. " записей лога."
+    if all then
+        DTCC._clearQuery = nil
+        if d then
+            d.text = "Очистить ВЕСЬ лог?\nЗаписей: " .. ((DTCC.db and #DTCC.db.log) or 0) .. "."
+        end
+    else
+        local opts = BuildLogOpts()
+        local _, total = DTCC.LogSearch(opts)
+        DTCC._clearQuery = DTCC.PrepareLogQuery(opts)
+        if d then
+            d.text = "Удалить из лога записи по ТЕКУЩИМ фильтрам?\nПодходит: " .. total ..
+                " из " .. ((DTCC.db and #DTCC.db.log) or 0) .. " записей лога."
+        end
     end
     StaticPopup_Show("DTCC_CLEAR_LOG")
 end
@@ -1312,9 +1318,9 @@ local function LogLayoutChecks()
     end
 end
 
--- (Пере)строить галочки каналов по настройке «Каналы» (worldChannel):
+-- (Пере)строить галочки чатов по настройке «Чаты» (worldChannel):
 -- подписи и ключи обновляются на месте, лишние галочки скрываются.
--- Вызывается при сборке вкладки и на SettingsChanged (список каналов
+-- Вызывается при сборке вкладки и на SettingsChanged (список чатов
 -- мог измениться в настройках).
 local function LogRebuildChannelChecks()
     if not logPage then return end
@@ -1951,7 +1957,6 @@ end
 
 local function BuildWindow()
     window = CreateFrame("Frame", "DTCCWindow", UIParent)
-    DTCC.mainWindow = window
     window:SetWidth(WIN_MIN_W)
     window:SetHeight(WIN_MIN_H)
     window:SetMovable(true)
@@ -2133,10 +2138,8 @@ end
 function DTCC.OpenWindow(tab)
     if not window then return end
     window:Show()
-    if tab then SelectTab(tab) end
-    BLRefresh()
-    FRRefresh()
-    LogRefresh()
+    -- SelectTab обновляет вкладку (и её данные); без номера — текущую
+    SelectTab(tab or currentTab)
 end
 
 function DTCC.ToggleWindow()
