@@ -209,10 +209,14 @@ local function MenuDescriptor(ctx)
         }
         items[#items + 1] = {
             text = "Перенести в ЧС (навсегда)",
+            disabled = DTCC.IsSelfPlayer(e.name),
             func = function()
                 DTCC.Friends_Remove(e.name)
-                DTCC.Blacklist_Add(e.name, { duration = 0, source = "manual" })
-                DTCC.Print(DTCC.CleanName(e.name) .. " перенесён из друзей в ЧС.")
+                if DTCC.Blacklist_Add(e.name, { duration = 0, source = "manual" }) then
+                    DTCC.Print(DTCC.CleanName(e.name) .. " перенесён из друзей в ЧС.")
+                else
+                    DTCC.Print(DTCC.COLORS.red .. "Нельзя добавить себя в ЧС.|r")
+                end
             end,
         }
 
@@ -221,9 +225,11 @@ local function MenuDescriptor(ctx)
         local name = e.p
         local inBL = DTCC.Blacklist_Get(name) and true or false
         local inFr = DTCC.Friends_Get(name) and true or false
+        local isSelf = DTCC.IsSelfPlayer(name)
 
         items[#items + 1] = {
             text = "Добавить в ЧС навсегда (за это сообщение)",
+            disabled = isSelf,
             func = function()
                 DTCC.Blacklist_Add(name, {
                     display  = name,
@@ -236,6 +242,7 @@ local function MenuDescriptor(ctx)
         }
         items[#items + 1] = {
             text = "Добавить в ЧС на 1 день (за это сообщение)",
+            disabled = isSelf,
             func = function()
                 DTCC.Blacklist_Add(name, {
                     display  = name,
@@ -287,8 +294,11 @@ local function MenuDescriptor(ctx)
                 end,
             }
         else
+            -- свой ник в чате тоже кликается — пункты ЧС показываем серыми
+            local isSelf = DTCC.IsSelfPlayer(name)
             items[#items + 1] = {
                 text = "В ЧС: на день",
+                disabled = isSelf,
                 func = function()
                     DTCC.Blacklist_Add(name, { duration = 86400, source = "manual" })
                     DTCC.Print(DTCC.COLORS.red .. name .. "|r добавлен в ЧС (1 день).")
@@ -296,6 +306,7 @@ local function MenuDescriptor(ctx)
             }
             items[#items + 1] = {
                 text = "В ЧС: на неделю",
+                disabled = isSelf,
                 func = function()
                     DTCC.Blacklist_Add(name, { duration = 604800, source = "manual" })
                     DTCC.Print(DTCC.COLORS.red .. name .. "|r добавлен в ЧС (неделя).")
@@ -303,6 +314,7 @@ local function MenuDescriptor(ctx)
             }
             items[#items + 1] = {
                 text = "В ЧС: навсегда",
+                disabled = isSelf,
                 func = function()
                     DTCC.Blacklist_Add(name, { duration = 0, source = "manual" })
                     DTCC.Print(DTCC.COLORS.red .. name .. "|r добавлен в ЧС (навсегда).")
@@ -525,6 +537,8 @@ local function BuildBLPage(parent)
                 DTCC.DurationLabel(dur) .. ").")
             blNameEdit:SetText("")
             BLRefresh()
+        elseif DTCC.IsSelfPlayer(name) then
+            DTCC.Print(DTCC.COLORS.red .. "Нельзя добавить себя в ЧС.|r")
         end
     end)
     addBL:SetPoint("TOPLEFT", 192, -2)

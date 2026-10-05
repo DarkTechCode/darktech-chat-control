@@ -409,18 +409,21 @@ local function ProcessChatLine(self, name, bare, prefix, meta)
             censored = true
             flags = flags + DTCC.FLAG_CENSORED
 
+            -- флаги и печать — только если запись реально создана (свой ник
+            -- Blacklist_Add не добавляет — само-бан исключён)
             if s.autoBlacklist and not friendEntry and not blEntry then
-                DTCC.Blacklist_Add(name, {
+                if DTCC.Blacklist_Add(name, {
                     display  = name,
                     reason   = bare,
                     duration = tonumber(s.autoBLDuration) or 0,
                     source   = "censor",
-                })
-                blEntry = true
-                flags = flags + DTCC.FLAG_BLACKLIST + DTCC.FLAG_AUTOBL
-                DTCC.Print(DTCC.COLORS.red .. name .. "|r автоматически добавлен в ЧС (" ..
-                    DTCC.DurationLabel(s.autoBLDuration) .. "): «" ..
-                    DTCC.Truncate(bare, 50) .. "»")
+                }) then
+                    blEntry = true
+                    flags = flags + DTCC.FLAG_BLACKLIST + DTCC.FLAG_AUTOBL
+                    DTCC.Print(DTCC.COLORS.red .. name .. "|r автоматически добавлен в ЧС (" ..
+                        DTCC.DurationLabel(s.autoBLDuration) .. "): «" ..
+                        DTCC.Truncate(bare, 50) .. "»")
+                end
             end
         end
     end

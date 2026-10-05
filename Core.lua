@@ -158,6 +158,15 @@ function DTCC.CleanName(name)
     return s
 end
 
+-- Это собственный ник игрока? (защита от само-добавления в ЧС).
+-- Без кэша: UnitName дёшев, а кэш, взятый до входа в мир, запомнил бы
+-- «Неизвестно» и навсегда перестал узнавать настоящий ник
+function DTCC.IsSelfPlayer(rawName)
+    local own = UnitName and UnitName("player")
+    if not own or own == "" then return false end
+    return DTCC.NameKey(rawName or "") == DTCC.NameKey(own)
+end
+
 -- "RRGGBB" -> r, g, b (0..1); nil при некорректном коде
 function DTCC.HexToRGB(hex)
     if type(hex) ~= "string" then return nil end
@@ -465,7 +474,9 @@ SlashCmdList["DTCC"] = function(input)
             DTCC.Print("Использование: /dtcc add Имя [дней|навсегда]  (по умолчанию — навсегда)")
         else
             local dur = ParseDurationArg(days)
-            if DTCC.Blacklist_Add(name, { duration = dur, source = "manual" }) then
+            if DTCC.IsSelfPlayer(name) then
+                DTCC.Print(DTCC.COLORS.red .. "Нельзя добавить себя в ЧС.|r")
+            elseif DTCC.Blacklist_Add(name, { duration = dur, source = "manual" }) then
                 DTCC.Print(DTCC.COLORS.red .. DTCC.CleanName(name) .. "|r добавлен в ЧС (" ..
                     DTCC.DurationLabel(dur) .. ").")
             end

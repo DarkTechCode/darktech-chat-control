@@ -25,6 +25,9 @@ function DTCC.Blacklist_Add(rawName, opts)
     local key = DTCC.NameKey(display)
     if key == "" then return false end
 
+    -- собственный ник в ЧС не добавляется (ни вручную, ни авто-цензурой)
+    if DTCC.IsSelfPlayer(display) then return false end
+
     local duration = tonumber(opts.duration) or 0
     local entry = {
         name    = display,
