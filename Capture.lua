@@ -15,10 +15,13 @@
          в лог КАК ЕСТЬ (метка RAW), без цензуры/скрытия/авто-ЧС.
     Дополнительно формат «[Тег] Имя: текст» (включается тегом в настройках).
 
-    Режим «каналы»: если сервер доставляет сообщения каналами (CHAT_MSG_CHANNEL),
-    укажите их имена в настройках («Каналы», через запятую — например
-    «Solo, Solo Progress»). Сообщения каждого канала проходят полный конвейер
-    (цензура/ЧС/лог) и помечаются в логе именем канала (поле ch).
+    Режим «чаты»: настройка «Чаты» (через запятую) — это теги системных
+    строк .chat (PikaWoW: [Solo], [Solo Progress] — строки приходят как
+    CHAT_MSG_SYSTEM) и/или имена настоящих каналов (CHAT_MSG_CHANNEL).
+    Сообщение с тегом/каналом из списка получает в логе собственную
+    галочку-фильтр и тег [Чат] перед текстом; строки без тега остаются
+    в «Мировом чате». Для строк без ссылки-игрока дополнительно распознаётся
+    формат «[Тег] Имя: сообщение».
 
     Локальные чаты (say/крик, группа/рейд, гильдия, приват) ТОЛЬКО логируются
     (поле src, список источников DTCC.LOCAL_SOURCES в Core.lua): без цензуры,
@@ -75,6 +78,32 @@ function DTCC.ExtractPlayerColor(text)
     local argb = string.match(tostring(text or ""), "|c(%x%x%x%x%x%x%x%x)|Hplayer:")
     if not argb then return nil end
     return strsub(argb, 3)
+end
+
+-- Тег в начале строки ([Solo], [Solo Progress]…), без скобок; nil, если тега
+-- нет (строка может начинаться с цветового кода перед тегом — учитываем)
+function DTCC.ExtractLeadingTag(text)
+    text = tostring(text or "")
+    local tag = string.match(text, "^%s*%[([^%]]+)%]")
+    if not tag then
+        local stripped = gsub(text, "^%s*|c%x%x%x%x%x%x%x%x%s*", "")
+        tag = string.match(stripped, "^%[([^%]]+)%]")
+    end
+    tag = tag and strtrim(tag) or nil
+    if tag == "" then return nil end
+    return tag
+end
+
+-- Тег строки, если он есть в настройке «Чаты» (регистр не важен).
+-- Возвращает тег как он написан в самой строке — это имя «чата» в логе
+function DTCC.MatchChatTag(text, worldChannel)
+    local tag = DTCC.ExtractLeadingTag(text)
+    if not tag then return nil end
+    local tagLow = DTCC.utf8lower(tag)
+    for _, ch in ipairs(DTCC.SplitChannelList(worldChannel)) do
+        if DTCC.utf8lower(ch) == tagLow then return tag end
+    end
+    return nil
 end
 
 --------------------------------------------------------------------------------
@@ -451,11 +480,31 @@ local function SystemFilter(self, event, text)
             DTCC.Print(DTCC.COLORS.green .. "формат мирового чата распознан — сообщения пишутся в лог|r " ..
                 DTCC.COLORS.grey .. "(/dtcc log)")
         end
-        -- цвет имени (фракция) из самой строки: запоминаем по игроку — каналы
-        -- цвет не передают и берут его из памяти
+        -- цвет имени (фракция) из самой строки: запоминаем по игроку — чаты
+        -- без ссылки-игрока цвет не передают и берут его из памяти
         local color = DTCC.ExtractPlayerColor(text)
         if color then DTCC.RememberPlayerColor(name, color) end
-        return ProcessChatLine(self, name, bare, prefix, { c = color })
+        -- тег строки ([Solo], [Solo Progress]…): если он в настройке «Чаты»,
+        -- запись получает собственную галочку-фильтр и тег в логе
+        return ProcessChatLine(self, name, bare, prefix,
+            { c = color, ch = DTCC.MatchChatTag(text, s.worldChannel) })
+    end
+
+    -- Запасной формат для чатов из настройки: «[Тег] Имя: сообщение» без
+    -- ссылки-игрока (PikaWoW так присылает, например, Solo Progress)
+    if type(text) == "string" then
+        local tag = DTCC.MatchChatTag(text, s.worldChannel)
+        if tag then
+            local esc = DTCC.PatternEscape(tag)
+            local fname, fmsg = string.match(text,
+                "^%s*%[" .. esc .. "%]%s*([^:|%[]+)%s*:%s*(.-)$")
+            fname = fname and DTCC.CleanName(fname) or ""
+            if fname ~= "" and fmsg and fmsg ~= "" then
+                return ProcessChatLine(self, fname, fmsg,
+                    "[" .. tag .. "] " .. fname .. ": ",
+                    { c = DTCC.GetPlayerColor(fname), ch = tag })
+            end
+        end
     end
 
     -- Уровень 3 (сырой): строка со ссылкой на игрока, но нестандартного вида.

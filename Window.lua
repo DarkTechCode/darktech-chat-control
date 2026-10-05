@@ -998,7 +998,7 @@ local function LogTooltip(self)
     GameTooltip:ClearLines()
     GameTooltip:AddLine(e.p .. "  —  " .. DTCC.FormatDateFull(e.t), 0.85, 0.9, 1)
     if e.ch and e.ch ~= "" then
-        GameTooltip:AddLine("Канал: " .. e.ch, 0.6, 0.8, 0.9)
+        GameTooltip:AddLine("Чат: " .. e.ch, 0.6, 0.8, 0.9)
     elseif e.src and e.src ~= "world" and DTCC.sourceBySrc[e.src] then
         GameTooltip:AddLine("Источник: " .. DTCC.sourceBySrc[e.src].label, 0.6, 0.8, 0.9)
     end
@@ -1084,7 +1084,7 @@ local function LogRebuildChannelChecks()
             -- cc объявлен отдельной строкой выше — замыкание видит local
             cc = {}
             cc.cb = DTCC.UI.Check(logPage, name,
-                "Показывать сообщения этого канала в логе.\n(источник — настройка «Каналы»)",
+                "Показывать сообщения этого чата в логе.\n(источник — настройка «Чаты»: тег строки .chat или имя канала)",
                 function(v)
                     if DTCC.db and cc.key then
                         DTCC.db.settings.logChannelShow = DTCC.db.settings.logChannelShow or {}

@@ -455,14 +455,14 @@ local function BuildPanel()
 
     local chanLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     chanLabel:SetPoint("TOPLEFT", 10, CY)
-    chanLabel:SetText("Каналы через запятую (если сервер доставляет чат каналами, а не системными):")
+    chanLabel:SetText("Чаты через запятую (теги строк .chat — [Solo], [Solo Progress] — и/или имена каналов):")
     Advance(16)
 
     local chanEdit = NewEdit(content, 240, function(text)
         DTCC.db.settings.worldChannel = strtrim(text or "")
-        DTCC.Print("каналы мирового чата: " ..
-            (DTCC.db.settings.worldChannel ~= "" and DTCC.db.settings.worldChannel or "выкл (системные сообщения)"))
-        -- без события вкладка «Лог» не перестроит галочки каналов до перезахода
+        DTCC.Print("чаты: " ..
+            (DTCC.db.settings.worldChannel ~= "" and DTCC.db.settings.worldChannel or "выкл (всё в «Мировой чат»)"))
+        -- без события вкладка «Лог» не перестроит галочки чатов до перезахода
         DTCC.FireEvent("SettingsChanged")
     end)
     chanEdit:SetPoint("TOPLEFT", 10, CY)
@@ -473,7 +473,8 @@ local function BuildPanel()
     chanHint:SetWidth(510)
     chanHint:SetJustifyH("LEFT")
     chanHint:SetTextColor(0.6, 0.6, 0.6)
-    chanHint:SetText("Например: Solo, Solo Progress. Для каждого канала на вкладке «Лог» появится своя галочка-фильтр.")
+    chanHint:SetText("Каждому чату — своя галочка-фильтр на вкладке «Лог». Сообщения с другими тегами\n" ..
+        "и без тега остаются в «Мировом чате». Формат строк подскажет /dtcc debug on.")
     Advance(20)
 
     local cbDebug = NewCheck(content, "Режим отладки (печатать все системные сообщения с игроками)",

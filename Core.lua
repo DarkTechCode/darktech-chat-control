@@ -295,9 +295,10 @@ local DEFAULTS = {
         alertCooldown   = 60,     -- пауза между алертами об одном игроке, сек
         alertSayDetect  = true,   -- детект по /say /yell /эмоции рядом
 
-        worldTag        = "",     -- тег мирового чата ("" = авто, напр. "[Мир]")
-        worldChannel    = "",     -- режим «каналы»: имена через запятую
-                                  -- ("" = только системные сообщения .chat)
+        worldTag        = "",     -- тег для запасного формата ("" = авто, напр. "[Мир]")
+        worldChannel    = "",     -- «Чаты»: через запятую теги системных строк .chat
+                                  -- ([Solo], [Solo Progress]) и/или имена каналов
+                                  -- ("" = всё в «Мировой чат» / только системные)
 
         minimapShow     = true,
         minimapAngle    = -65,
@@ -314,7 +315,7 @@ local DEFAULTS = {
     factions  = {}, -- [ключ] = "RRGGBB" — цвет имени игрока из мирового чата
                     -- (сервер красит по фракции; каналы цвет не передают — берём отсюда)
     log       = {}, -- массив { t, p, m, f, c|nil, ch|nil, src|nil }
-    dbVersion = 3,
+    dbVersion = 4,
 }
 
 local function CopyDefaults(defaults, db)
@@ -352,7 +353,19 @@ function DTCC.InitDB()
                 db.settings.logShowSources[k] = false
             end
         end
-        db.dbVersion = 3
+    end
+    -- v4: «Чаты» — теперь и теги системных строк .chat. Существующей базе
+    -- (не новой) с пустым списком один раз прописываем теги PikaWoW и
+    -- включаем их галочки — это и есть её «мировый чат», разделённый по
+    -- тегам (новые базы остаются нейтральными)
+    if oldVersion < 4 then
+        if oldVersion >= 2 and strtrim(tostring(db.settings.worldChannel or "")) == "" then
+            db.settings.worldChannel = "Solo, Solo Progress"
+            db.settings.logChannelShow = db.settings.logChannelShow or {}
+            db.settings.logChannelShow["solo"] = true
+            db.settings.logChannelShow["solo progress"] = true
+        end
+        db.dbVersion = 4
     end
     DTCC.db = db
 end
