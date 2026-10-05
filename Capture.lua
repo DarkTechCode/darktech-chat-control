@@ -494,8 +494,6 @@ end
 -- Фильтр системных сообщений
 --------------------------------------------------------------------------------
 
-local formatRecognized = false
-
 local function SystemFilter(self, event, text)
     local db = DTCC.db
     if not db then return end
@@ -510,11 +508,6 @@ local function SystemFilter(self, event, text)
 
     local name, bare, prefix = DTCC.ParseWorldMessage(text, s.worldTag)
     if name then
-        if not formatRecognized then
-            formatRecognized = true
-            DTCC.Print(DTCC.COLORS.green .. "формат мирового чата распознан — сообщения пишутся в лог|r " ..
-                DTCC.COLORS.grey .. "(/dtcc log)")
-        end
         -- цвета из строки: c — как сервер красит НИК (на PikaWoW — белый),
         -- tc — цвет ТЕГА (фракция: синий альянс / красный орда). В память
         -- игрока кладём фракционный (теговый) — он и красит ники записей

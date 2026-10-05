@@ -303,7 +303,7 @@ local DEFAULTS = {
         alertEnabled    = true,   -- алерты о ЧС рядом
         alertPopup      = true,   -- всплывающее окно (в стиле SilverDragon)
         alertRW         = false,  -- Raid Warning по центру
-        alertChat       = true,   -- сообщение в чат
+        alertChat       = false,  -- сообщение в чат (без лишнего спама; попап остаётся)
         alertErrors     = false,  -- красное сообщение по центру экрана
         alertSound      = "Sound\\Interface\\AlarmClockWarning3.wav",
         alertCooldown   = 60,     -- пауза между алертами об одном игроке, сек
@@ -335,7 +335,7 @@ local DEFAULTS = {
     factions  = {}, -- [ключ] = "RRGGBB" — цвет имени игрока из мирового чата
                     -- (сервер красит по фракции; каналы цвет не передают — берём отсюда)
     log       = {}, -- массив { t, p, m, f, c|nil, ch|nil, src|nil }
-    dbVersion = 5,
+    dbVersion = 6,
 }
 
 local function CopyDefaults(defaults, db)
@@ -392,6 +392,13 @@ function DTCC.InitDB()
     if oldVersion < 5 then
         db.settings.censorMode = "HIDE"
         db.dbVersion = 5
+    end
+    -- v6: алерт «ЧС рядом» сообщением в чат по умолчанию выключен
+    -- (попап и звук остаются); существующей базе гасим один раз —
+    -- свежие базы берут дефолт сами
+    if oldVersion < 6 then
+        db.settings.alertChat = false
+        db.dbVersion = 6
     end
     DTCC.db = db
 end
@@ -562,13 +569,7 @@ coreFrame:SetScript("OnEvent", function(self, event, arg1)
                 "Нужен ПОЛНЫЙ перезапуск игры (/reload недостаточно).")
         end
         DTCC.RebuildCensorCache()
-        local purged = DTCC.Blacklist_PurgeExpired()
+        DTCC.Blacklist_PurgeExpired()
         DTCC.FireEvent("OnPlayerLogin")
-        local extra = ""
-        if purged and purged > 0 then
-            extra = DTCC.COLORS.grey .. " (истёкших записей ЧС удалено: " .. purged .. ")|r"
-        end
-        DTCC.Print("v" .. DTCC.Version .. " загружен. " ..
-            DTCC.COLORS.grey .. "/dtcc — окно, /dtcc help — команды" .. extra)
     end
 end)
