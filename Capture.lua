@@ -341,6 +341,13 @@ local function ProcessChatLine(self, name, bare, prefix, color, channel)
     end
 
     ------------------------------------------------------------------ лог
+    -- «Скрытые» = сообщение НЕ попадает в чат (ЧС или цензура «Скрывать»):
+    -- помечаем ДО записи — по этому флагу работает галочка «Скрытые» на
+    -- вкладке «Лог» (типы-галочки складываются как «ИЛИ»)
+    if (blEntry and s.hideBlacklisted)
+        or (censored and s.censorMode == "HIDE") then
+        flags = flags + DTCC.FLAG_HIDDEN
+    end
     DTCC.LogAdd(name, bare, flags, color, channel)
 
     ------------------------------------------------------------------ ЧС: скрыть

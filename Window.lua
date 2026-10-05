@@ -606,20 +606,20 @@ end
 --------------------------------------------------------------------------------
 -- Вкладка «Лог»
 --
--- Фильтры — галочки в две строки. Строка 1 — источники: «Мировой чат»
--- (сообщения .chat; по умолчанию включено), отдельная галочка на каждый канал
--- из настройки «Каналы» (Solo, Solo Progress… — строятся динамически,
--- по умолчанию включены) и «RAW» (системные строки со ссылкой игрока: входы,
--- достижения и т.п.). Строка 2 — типы ЧС/скрытые/цензура/авто-ЧС/друзья
--- (не отмечено ничего = любой тип). Имя автора окрашено цветом фракции, как
--- в общем чате (цвет приходит из .chat и запоминается по игроку; сообщения
--- каналов получают запомненный цвет, перед текстом — тег [Канал]).
--- Сообщение занимает всю ширину окна и переносится на несколько строк
--- (без «…») — высота строки переменная, поэтому скролл свой (Slider),
--- не FauxScrollFrame. Текст сообщения лежит в ScrollingMessageFrame:
--- ссылки предметов работают как в чате — клик открывает подсказку (тултип
--- при НАВЕДЕНИИ клиент 3.3.5 не поддерживает, обработчик подключён
--- на случай более новых клиентов).
+-- Фильтры — галочки в ОДИН ряд, перенос на следующую строку только когда
+-- не помещаются (источники идут первыми: «Мировой чат», галочки каналов из
+-- настройки «Каналы» (Solo, Solo Progress…, строятся динамически), «RAW»;
+-- затем типы ЧС/скрытые/цензура/авто-ЧС/друзья — не отмечено ничего =
+-- любой тип, несколько отмеченных складываются как «ИЛИ»). Шрифт записей —
+-- как в игровом чате (крупнее мелкого UI-шрифта). Имя автора окрашено
+-- цветом фракции, как в общем чате (цвет приходит из .chat и запоминается
+-- по игроку; сообщения каналов получают запомненный цвет, перед текстом —
+-- тег [Канал]). Сообщение занимает всю ширину окна и переносится на
+-- несколько строк (без «…») — высота строки переменная, поэтому скролл
+-- свой (Slider), не FauxScrollFrame. Текст сообщения лежит в
+-- ScrollingMessageFrame: ссылки предметов работают как в чате — клик
+-- открывает подсказку (тултип при НАВЕДЕНИИ клиент 3.3.5 не поддерживает,
+-- обработчик подключён на случай более новых клиентов).
 --------------------------------------------------------------------------------
 
 local logPage, logRows, logItems
@@ -640,13 +640,23 @@ local logSpaceW = 4        -- ширина пробела
 local logWordWidths = {}   -- кэш ширин слов (от ширины колонки не зависит)
 local logRendering = false -- защита от повторного входа через OnValueChanged
 
-local LOG_TIME_W  = 70     -- колонка «Время»
-local LOG_NAME_W  = 86     -- колонка «Игрок»
-local LOG_MSG_X   = 168    -- X колонки «Сообщение» (в координатах строки)
-local LOG_TOP     = 126    -- верх списка: поиск (−4…−26) + галочки источников
-                           -- 26px (−30…−56) + галочки типов (−58…−84) + счётчик
-                           -- (−88…−103) + заголовки (−106…−121)
+local LOG_TIME_W  = 76     -- колонка «Время»
+local LOG_NAME_W  = 90     -- колонка «Игрок»
+local LOG_MSG_X   = 178    -- X колонки «Сообщение» (в координатах строки)
+local LOG_TOP_BASE = 98    -- верх списка при ОДНОЙ строке галочек: поиск
+                           -- (−4…−26) + галочки 26px (−30…−56) + счётчик
+                           -- (−60…−75) + заголовки (−78…−93); каждая
+                           -- дополнительная строка галочек (перенос, когда
+                           -- не влезают в ширину) опускает список на 28px
 local LOG_BOTTOM  = 8
+
+local logCheckRows  = 1            -- фактическое число строк галочек
+local logTop        = LOG_TOP_BASE -- верх списка (зависит от строк галочек)
+local logColHeaders = {}           -- { { fs = .., x = .. } } — заголовки колонок,
+                                   -- перецепляются при переносе галочек
+local logFontPath, logFontHeight = "Fonts\\FRIZQT__.TTF", 12
+                                   -- шрифт записей: берём из игрового чата
+                                   -- (BuildLogPage → LogChatFont)
 
 local PERIODS = {
     { text = "Всё время",   value = 0     },
@@ -750,7 +760,7 @@ LogRenderInner = function()
     if not logPage or not logRows then return end
     logItems = logItems or {}
     local n = #logItems
-    local pageH = max(ROW_H, logPage:GetHeight() - LOG_TOP - LOG_BOTTOM)
+    local pageH = max(ROW_H, logPage:GetHeight() - logTop - LOG_BOTTOM)
     local msgW = max(60, logPage:GetWidth() - LOG_MSG_X - 36)
 
     -- максимальный офсет: последняя страница целиком видна (снизу вверх)
@@ -779,7 +789,7 @@ LogRenderInner = function()
             row:SetWidth(max(60, logPage:GetWidth() - 12))
             row:SetHeight(h)
             row:ClearAllPoints()
-            row:SetPoint("TOPLEFT", logPage, "TOPLEFT", 6, -(LOG_TOP + (y - h)))
+            row:SetPoint("TOPLEFT", logPage, "TOPLEFT", 6, -(logTop + (y - h)))
             row.head.entry = e
             row.head.timeF:SetText(DTCC.FormatTimeShort(e.t))
             row.head.timeF:SetTextColor(0.55, 0.55, 0.55)
@@ -917,23 +927,54 @@ local function LogTooltip(self)
     GameTooltip:Show()
 end
 
--- Ряд источников (строка 1): «Мировой чат», «RAW», затем галочки каналов.
--- ВАЖНО: рамка чекбокса узкая (26px), подпись живёт ЗА её пределами —
--- цеплять «LEFT к RIGHT рамки предыдущего» нельзя (квадрат встанет поверх
--- чужой подписи). Позиции считаем вручную по фактической ширине подписей.
-local function LogLayoutSourceRow()
+-- Раскладка галочек фильтров: все в ОДИН ряд; на следующую строку галочка
+-- уходит, только если не помещается по ширине вкладки (источники идут
+-- первыми, поэтому перенос обычно режет между источниками и типами).
+-- Под фактическое число строк сдвигает счётчик, заголовки колонок, слайдер
+-- и верх списка (logTop). ВАЖНО: рамка чекбокса узкая (26px), подпись живёт
+-- ЗА её пределами — позиции считаем вручную по фактической ширине подписей.
+local function LogLayoutChecks()
     if not logPage then return end
-    local cbX = 4
-    local active = { logCheckboxes.players, logCheckboxes.raw }
-    for _, cc in ipairs(logChannelChecks) do
-        if cc.key then active[#active + 1] = cc end
+    local ordered = {}
+    local function add(cb)
+        if cb then ordered[#ordered + 1] = cb end
     end
-    for _, ctl in ipairs(active) do
-        local cb = ctl.cb or ctl
-        if cb then
-            cb:SetPoint("TOPLEFT", logPage, "TOPLEFT", cbX, -30)
-            cbX = cbX + 26 + 4 + (cb.label:GetStringWidth() or 0) + 14
+    add(logCheckboxes.players)
+    for _, cc in ipairs(logChannelChecks) do
+        if cc.key then add(cc.cb) end
+    end
+    add(logCheckboxes.raw)
+    for _, ckey in ipairs({ "friend", "bl", "hidden", "censor", "autobl" }) do
+        add(logCheckboxes[ckey])
+    end
+
+    local pageW = logPage:GetWidth() - 8
+    local x, y, row = 4, -30, 1
+    for _, cb in ipairs(ordered) do
+        local labelW = cb.label:GetStringWidth() or 0
+        if x > 4 and (x + 30 + labelW) > pageW then
+            x = 4
+            y = y - 28
+            row = row + 1
         end
+        cb:SetPoint("TOPLEFT", logPage, "TOPLEFT", x, y)
+        x = x + 30 + labelW + 14
+    end
+    logCheckRows = row
+    logTop = LOG_TOP_BASE + (row - 1) * 28
+
+    local counterY = -(30 + row * 28 + 2)
+    if logCountLabel then
+        logCountLabel:SetPoint("TOPLEFT", 6, counterY)
+    end
+    local headerY = counterY - 18
+    for _, hh in ipairs(logColHeaders) do
+        hh.fs:SetPoint("TOPLEFT", hh.x, headerY)
+    end
+    if logSlider then
+        logSlider:ClearAllPoints()
+        logSlider:SetPoint("TOPRIGHT", logPage, "TOPRIGHT", -10, -logTop)
+        logSlider:SetPoint("BOTTOMRIGHT", logPage, "BOTTOMRIGHT", -10, LOG_BOTTOM)
     end
 end
 
@@ -980,7 +1021,21 @@ local function LogRebuildChannelChecks()
         logChannelChecks[i].key = nil
         logChannelChecks[i].cb:Hide()
     end
-    LogLayoutSourceRow()
+    LogLayoutChecks()
+end
+
+-- Шрифт записей лога — как в игровом чате (крупнее мелкого UI-шрифта,
+-- длинные сообщения читаются заметно легче). Берём прямо из
+-- DEFAULT_CHAT_FRAME — учитывает и клиент, и настройки шрифта игрока;
+-- при недоступности (нет фрейма/GetFont) — мелкий шрифт интерфейса.
+local function LogChatFont()
+    local ok, path, height = pcall(DEFAULT_CHAT_FRAME.GetFont, DEFAULT_CHAT_FRAME)
+    if ok and type(path) == "string" and tonumber(height) then
+        local h = tonumber(height)
+        if h < 12 then h = 12 end
+        return path, floor(h)
+    end
+    return GameFontNormalSmall:GetFont()
 end
 
 local function BuildLogPage(parent)
@@ -1023,11 +1078,8 @@ local function BuildLogPage(parent)
     end)
     clearBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-    -- строки 2-3: фильтры-галочки. Строка 2 — источники («Мировой чат»,
-    -- «RAW» + галочки каналов из настройки), строка 3 — типы.
-    -- ВАЖНО: рамка чекбокса узкая (26px), подпись живёт ЗА её пределами —
-    -- цеплять «LEFT к RIGHT рамки предыдущего» нельзя (квадрат встанет поверх
-    -- чужой подписи). Позиции считаем вручную по фактической ширине подписей.
+    -- фильтры-галочки: создаются без позиций — раскладку (одна строка,
+    -- перенос при нехватке ширины) делает LogLayoutChecks, когда готовы все
     local function SourceCheck(settingKey, ckey, labelText, tooltip)
         local cb = DTCC.UI.Check(logPage, labelText, tooltip, function(v)
             if DTCC.db then DTCC.db.settings[settingKey] = v end
@@ -1064,38 +1116,32 @@ local function BuildLogPage(parent)
     FlagCheck("bl", DTCC.FLAG_BLACKLIST, "ЧС",
         "Только сообщения игроков из чёрного списка.")
     FlagCheck("hidden", DTCC.FLAG_HIDDEN, "Скрытые",
-        "Только сообщения, скрытые из чата (игрок в ЧС).")
+        "Только сообщения, скрытые из чата (ЧС или цензура «Скрывать из чата»).")
     FlagCheck("censor", DTCC.FLAG_CENSORED, "Цензура",
         "Только сообщения с запрещёнными словами.")
     FlagCheck("autobl", DTCC.FLAG_AUTOBL, "Авто-ЧС",
-        "Только сообщения, за которые игрок попал в ЧС автоматически.")
-
-    -- строка 2 (источники): «Мировой чат» + «RAW» + галочки каналов —
-    -- позиции и галочки каналов раскладывает LogRebuildChannelChecks
-    LogRebuildChannelChecks()
-
-    -- строка 3 (типы): квадрат 26px, подпись в 4px правее него, до следующего
-    -- квадрата 14px (по ширине подписи, не по рамке!)
-    local cbX = 4
-    for _, ckey in ipairs({ "friend", "bl", "hidden", "censor", "autobl" }) do
-        local cb = logCheckboxes[ckey]
-        if cb then
-            cb:SetPoint("TOPLEFT", logPage, "TOPLEFT", cbX, -58)
-            cbX = cbX + 26 + 4 + (cb.label:GetStringWidth() or 0) + 14
-        end
-    end
+        "Только сообщения, за которые игрок попал в ЧС автоматически.\nНесколько типов-галочек складываются как «ИЛИ».")
 
     logCountLabel = MakeLabel(logPage, "", "GameFontNormalSmall")
     logCountLabel:SetTextColor(0.6, 0.6, 0.6)
-    logCountLabel:SetPoint("TOPLEFT", 6, -88)
 
-    local h1 = MakeLabel(logPage, "Время");     h1:SetTextColor(0.5, 0.5, 0.5); h1:SetPoint("TOPLEFT", 10, -106)
-    local h2 = MakeLabel(logPage, "Игрок");     h2:SetTextColor(0.5, 0.5, 0.5); h2:SetPoint("TOPLEFT", 84, -106)
-    local h3 = MakeLabel(logPage, "Сообщение"); h3:SetTextColor(0.5, 0.5, 0.5); h3:SetPoint("TOPLEFT", 174, -106)
+    -- заголовки колонок (позиции выставляет LogLayoutChecks — сдвигаются
+    -- вместе со счётчиком при переносе галочек на вторую строку)
+    logColHeaders = {
+        { fs = MakeLabel(logPage, "Время"),     x = 10 },
+        { fs = MakeLabel(logPage, "Игрок"),     x = 84 },
+        { fs = MakeLabel(logPage, "Сообщение"), x = LOG_MSG_X },
+    }
+    for _, hh in ipairs(logColHeaders) do
+        hh.fs:SetTextColor(0.5, 0.5, 0.5)
+    end
 
-    -- скрытый fontstring для замеров шрифта сообщений
+    -- шрифт записей — как в игровом чате; замер переноса (logMeasure) должен
+    -- использовать ТОТ ЖЕ шрифт, иначе высоты строк не сойдутся с рендером
+    logFontPath, logFontHeight = LogChatFont()
     logMeasure = logPage:CreateFontString(nil, "BACKGROUND", "GameFontNormalSmall")
     logMeasure:Hide()
+    logMeasure:SetFont(logFontPath, logFontHeight)
     logMeasure:SetText("n n")
     local withSpace = logMeasure:GetStringWidth()
     logMeasure:SetText("nn")
@@ -1113,7 +1159,7 @@ local function BuildLogPage(parent)
     logSlider = CreateFrame("Slider", "DTCCWin_LogScroll", logPage, "UIPanelScrollBarTemplate")
     logSlider:SetOrientation("VERTICAL")
     logSlider:SetWidth(16)
-    logSlider:SetPoint("TOPRIGHT", logPage, "TOPRIGHT", -10, -LOG_TOP)
+    logSlider:SetPoint("TOPRIGHT", logPage, "TOPRIGHT", -10, -logTop)
     logSlider:SetPoint("BOTTOMRIGHT", logPage, "BOTTOMRIGHT", -10, LOG_BOTTOM)
     logSlider:SetScript("OnValueChanged", function(self, value)
         SetLogOffset(floor((tonumber(value) or 0) + 0.5))
@@ -1137,6 +1183,10 @@ local function BuildLogPage(parent)
         end)
     end
 
+    -- галочки каналов по настройке + первая раскладка всех галочек/шапки
+    -- (после неё LogLayoutChecks знает и слайдер, и счётчик, и заголовки)
+    LogRebuildChannelChecks()
+
     logPage:SetScript("OnMouseWheel", function(_, delta)
         SetLogOffset(logOff - (delta > 0 and 2 or -2))
     end)
@@ -1157,10 +1207,12 @@ local function BuildLogPage(parent)
         hl:SetAllPoints(head)
         hl:SetBlendMode("ADD")
         head.timeF = head:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        head.timeF:SetFont(logFontPath, logFontHeight)
         head.timeF:SetPoint("TOPLEFT", head, "TOPLEFT", 4, -4)
         head.timeF:SetWidth(LOG_TIME_W)
         head.timeF:SetJustifyH("LEFT")
         head.nameF = head:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        head.nameF:SetFont(logFontPath, logFontHeight)
         head.nameF:SetPoint("TOPLEFT", head, "TOPLEFT", LOG_TIME_W + 8, -4)
         head.nameF:SetWidth(LOG_NAME_W)
         head.nameF:SetJustifyH("LEFT")
@@ -1183,7 +1235,7 @@ local function BuildLogPage(parent)
         smf:SetFading(false)
         smf:SetMaxLines(1) -- одна запись на строку: AddMessage замещает прежнюю
         smf:SetJustifyH("LEFT")
-        smf:SetFont(GameFontNormalSmall:GetFont())
+        smf:SetFont(logFontPath, logFontHeight) -- шрифт игрового чата, как у колонок
         smf:SetScript("OnHyperlinkClick", function(self, link, text, button)
             SetItemRef(link, text, button, self)
         end)
@@ -1447,6 +1499,7 @@ DTCC.SelectTab = SelectTab
 local function LayoutAllPages()
     BLLayout()
     FRLayout()
+    LogLayoutChecks() -- перенос галочек зависит от ширины; сдвигает шапку/слайдер
     CNLayout()
 end
 

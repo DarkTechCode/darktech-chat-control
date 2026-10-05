@@ -117,13 +117,16 @@ README.md — пользовательская документация (не з
 | Capture.lua | 3-уровневый парсер (strict mod-world-chat → tolerant → RAW), `ParseWorldMessage`, `ExtractPlayerColor` (|cff перед |Hplayer: — цвет фракции) + память `RememberPlayerColor`/`GetPlayerColor` (`db.factions` по NameKey), `LogAdd(name, msg, flags, color, channel)` / `LogSearch` (`channels` — карта «канал→bool») / `ClearLog`, `SendWorldMessage` (`.chat` через SAY), фильтры CHAT_MSG_SYSTEM/CHANNEL (каналов — список из `SplitChannelList`), конвейер `ProcessChatLine` |
 | Alerts.lua | `DTCC.SOUNDS`, пул попапов, `FireProximityAlert`, детект (mouseover/target/focus/say/yell/emote) |
 | Options.lua | панель Interface Options (`NewCheck/NewDropdown/NewButton/NewEdit/NewSection`, `Refresh` по SettingsChanged, StaticPopup-диалоги очистки лога/сброса) |
-| Window.lua | окно: вкладки ЧС (сортировка по заголовкам + колонка «Добавлен»), Друзья, Лог (галочки-фильтры в ДВА ряда: источники «Мировой чат»/«RAW»/каналы и типы; состояние в `settings.logShowPlayers/logShowRaw/logFilterFlags/logChannelShow`; галочки каналов — динамика: `LogRebuildChannelChecks`/`LogLayoutSourceRow` по настройке «Каналы», перестройка на SettingsChanged; цвет имени автора — ЧС/друг поверх, иначе цвет фракции `e.c or GetPlayerColor`; тег `[Канал]` перед сообщением канальной записи, в замере высоты — `LogBareText`; строки переменной высоты: сообщение в дочернем SMF на всю ширину с переносом, кликабельные |Hitem|-ссылки; свой Slider + колесо; кнопка «Очистить лог» → StaticPopup), Цензура (единственный редактор слов на всю вкладку: `CNRefresh(true)` при открытии грузит слова в поле, `cnFieldDirty` защищает недопечатанное от затирания, `CNLayout` растягивает EditBox под вкладку); контекстное меню `MenuDescriptor` (режимы `bl/friend/log`). Окно растягивается за грип `DTCCWindowResizeGrip` (`SetResizable` + `StartSizing("BOTTOMRIGHT")`, на время растягивания `SetClampedToScreen(false)`): по вкладкам-спискам ЧС/Друзья тройка `XXLayout` (число видимых строк + ширина последней колонки) → `XXRender` (из кэша — вызывается на каждый `OnSizeChanged` во время растягивания, полные поиск/сортировка там нельзя — фризы) → `XXRefresh` (полный пересчёт); лог: `LogRefresh` (поиск+подпись) → `LogRender` (перемер только видимых+последней страницы, кэш высот `logHeightCache` по «запись+ширина», перенос считает `LogCountLines` по ширинам слов `LogWordWidth`). Пул строк `ROW_POOL` (32), offset подрезает `ClampScroll` (ЧС/друзья) / maxOff-проход (лог), текст в колонки укладывает `FitText`. Размер/позиция — `settings.winW/winH/winX/winY` |
+| Window.lua | окно: вкладки ЧС (сортировка по заголовкам + колонка «Добавлен»), Друзья, Лог (галочки-фильтры в ОДИН ряд с переносом при нехватке ширины: `LogLayoutChecks` — источники «Мировой чат»/каналы/«RAW», затем типы; сдвигает счётчик/заголовки/слайдер и `logTop`; вызывается из `LayoutAllPages` при ресайзе; состояние в `settings.logShowPlayers/logShowRaw/logFilterFlags/logChannelShow`; галочки каналов — динамика: `LogRebuildChannelChecks` по настройке «Каналы», перестройка на SettingsChanged; шрифт записей — из игрового чата `LogChatFont` (SMF+колонки+`logMeasure` — одинаковые, иначе высоты строк не сойдутся); цвет имени автора — ЧС/друг поверх, иначе цвет фракции `e.c or GetPlayerColor`; тег `[Канал]` перед сообщением канальной записи, в замере высоты — `LogBareText`; строки переменной высоты: сообщение в дочернем SMF на всю ширину с переносом, кликабельные |Hitem|-ссылки; свой Slider + колесо; кнопка «Очистить лог» → StaticPopup), Цензура (единственный редактор слов на всю вкладку: `CNRefresh(true)` при открытии грузит слова в поле, `cnFieldDirty` защищает недопечатанное от затирания, `CNLayout` растягивает EditBox под вкладку); контекстное меню `MenuDescriptor` (режимы `bl/friend/log`). Окно растягивается за грип `DTCCWindowResizeGrip` (`SetResizable` + `StartSizing("BOTTOMRIGHT")`, на время растягивания `SetClampedToScreen(false)`): по вкладкам-спискам ЧС/Друзья тройка `XXLayout` (число видимых строк + ширина последней колонки) → `XXRender` (из кэша — вызывается на каждый `OnSizeChanged` во время растягивания, полные поиск/сортировка там нельзя — фризы) → `XXRefresh` (полный пересчёт); лог: `LogRefresh` (поиск+подпись) → `LogRender` (перемер только видимых+последней страницы, кэш высот `logHeightCache` по «запись+ширина», перенос считает `LogCountLines` по ширинам слов `LogWordWidth`). Пул строк `ROW_POOL` (32), offset подрезает `ClampScroll` (ЧС/друзья) / maxOff-проход (лог), текст в колонки укладывает `FitText`. Размер/позиция — `settings.winW/winH/winX/winY` |
 | Minimap.lua | кнопка миникарты (`RegisterForDrag`, защита от коллекторов DragonUI) |
 
 Порядок конвейера в `ProcessChatLine` (менять осторожно): флаги списков →
-цензура/авто-ЧС → лог (`LogAdd` — до скрытия, скрытое всегда в логе) →
-скрытие ЧС (hideBlacklisted/заглушка) → скрытие цензуры (`censorMode=="HIDE"`)
-→ пересборка строки (маскирование, время, `[ДРУГ]`).
+цензура/авто-ЧС → пометка «скрыто» (FLAG_HIDDEN — сообщение НЕ попадёт в
+чат: ЧС с hideBlacklisted или цензура HIDE) → лог (`LogAdd` — до скрытия,
+скрытое всегда в логе и ищется галочкой «Скрытые»; типы-галочки = «ИЛИ»,
+RAW типы не касаются) → скрытие ЧС (hideBlacklisted/заглушка) → скрытие
+цензуры (`censorMode=="HIDE"`) → пересборка строки (маскирование, время,
+`[ДРУГ]`).
 
 События шины: `OnInitialized`, `OnPlayerLogin`, `SettingsChanged`,
 `ListsChanged`, `BlacklistUpdated`, `LogChanged`, `MinimapSettingChanged`.
@@ -165,6 +168,23 @@ README.md — пользовательская документация (не з
 
 ## Текущее состояние (обновляй при релизе)
 
+- **v1.6.1 (2026-10-05)**: правки лога по фидбеку на v1.6.0. (1) Галочки —
+  в ОДНУ строку с переносом (`LogLayoutChecks`: порядок источники→типы,
+  перенос по ширине вкладки; сдвигает счётчик/заголовки/слайдер и
+  динамический `logTop = LOG_TOP_BASE + (rows-1)*28`; вызывается при билде,
+  SettingsChanged и ресайзе из LayoutAllPages — в минимальном окне 660 всё
+  равно 2 строки, одна — в растянутом ~810px+). (2) БАГ: FLAG_HIDDEN никогда
+  не ставился → галочка «Скрытые» ничего не находила; теперь флаг ставится
+  в ProcessChatLine до LogAdd на фактически скрытые (ЧС с hideBlacklisted
+  или цензура HIDE); типы-галочки — «ИЛИ» (это и было задумано), RAW
+  типами не фильтруются (каждый flag-поиск их считает — в тестах вычитать).
+  (3) Шрифт записей — из игрового чата (`LogChatFont` =
+  DEFAULT_CHAT_FRAME:GetFont, минимум 12): SMF + колонки времени/имени +
+  logMeasure ОДИНАКОВЫ (иначе высоты строк не сойдутся с рендером);
+  LOG_TIME_W 70→76, LOG_NAME_W 86→90, LOG_MSG_X 168→178. Тесты: логика
+  95/95, UI 123/123 (широкая вкладка → один ряд, узкая → перенос без
+  наездов; шрифт; «ИЛИ»; скрытые помечены). ПРАВКА .TOC — полный
+  перезапуск. Ждёт плейтеста.
 - **v1.6.0 (2026-10-05)**: каналы-источники списком через запятую
   (`worldChannel`; миграция dbVersion 1→2: одиночное имя «Solo» один раз
   дополняется «Solo, Solo Progress» — старую версию базы читать ДО
