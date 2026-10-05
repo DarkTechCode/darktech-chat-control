@@ -162,6 +162,24 @@ local function MenuDescriptor(ctx)
                     DTCC.Print(DTCC.CleanName(e.name) .. " — запись в ЧС теперь бессрочная.")
                 end,
             }
+            -- продление срока: прибавляется к остатку текущего бана
+            -- (подписи — винительный падеж, strlower кириллицу не умеет)
+            local EXTEND = {
+                { secs = 86400,    label = "1 день"  },
+                { secs = 259200,   label = "3 дня"   },
+                { secs = 604800,   label = "неделю"  },
+                { secs = 2592000,  label = "месяц"   },
+            }
+            for _, d in ipairs(EXTEND) do
+                items[#items + 1] = {
+                    text = "Продлить на " .. d.label,
+                    func = function()
+                        local expires = DTCC.Blacklist_Extend(e.name, d.secs)
+                        DTCC.Print(DTCC.CleanName(e.name) .. " — бан продлён, осталось: " ..
+                            DTCC.FormatRemaining(expires) .. ".")
+                    end,
+                }
+            end
         end
         items[#items + 1] = {
             text = "Добавить в друзья (убрать из ЧС)",
@@ -253,6 +271,61 @@ local function MenuDescriptor(ctx)
                 end,
             }
         end
+
+    elseif mode == "chat" then
+        -- правый клик по нику в игровом чате (|Hplayer:-ссылка мирового чата)
+        local name = ctx.name
+        local inBL = DTCC.Blacklist_Get(name) and true or false
+        local inFr = DTCC.Friends_Get(name) and true or false
+
+        if inBL then
+            items[#items + 1] = {
+                text = "Убрать из ЧС",
+                func = function()
+                    DTCC.Blacklist_Remove(name)
+                    DTCC.Print(name .. " удалён из ЧС.")
+                end,
+            }
+        else
+            items[#items + 1] = {
+                text = "В ЧС: на день",
+                func = function()
+                    DTCC.Blacklist_Add(name, { duration = 86400, source = "manual" })
+                    DTCC.Print(DTCC.COLORS.red .. name .. "|r добавлен в ЧС (1 день).")
+                end,
+            }
+            items[#items + 1] = {
+                text = "В ЧС: на неделю",
+                func = function()
+                    DTCC.Blacklist_Add(name, { duration = 604800, source = "manual" })
+                    DTCC.Print(DTCC.COLORS.red .. name .. "|r добавлен в ЧС (неделя).")
+                end,
+            }
+            items[#items + 1] = {
+                text = "В ЧС: навсегда",
+                func = function()
+                    DTCC.Blacklist_Add(name, { duration = 0, source = "manual" })
+                    DTCC.Print(DTCC.COLORS.red .. name .. "|r добавлен в ЧС (навсегда).")
+                end,
+            }
+        end
+        if inFr then
+            items[#items + 1] = {
+                text = "Убрать из друзей",
+                func = function()
+                    DTCC.Friends_Remove(name)
+                    DTCC.Print(name .. " удалён из друзей.")
+                end,
+            }
+        else
+            items[#items + 1] = {
+                text = "В друзья",
+                func = function()
+                    DTCC.Friends_Add(name)
+                    DTCC.Print(DTCC.COLORS.green .. name .. "|r добавлен в друзья.")
+                end,
+            }
+        end
     end
     return items
 end
@@ -260,6 +333,28 @@ end
 local function ShowMenu(ctx)
     menuCtx = ctx
     DTCC.UI.PopupMenu(MenuDescriptor(ctx))
+end
+
+-- Контекстное меню по нику в ИГРОВОМ чате: подменяем глобальный SetItemRef
+-- (так делали Prat/WIM на 3.3.5). Правый клик по |Hplayer: — наше меню
+-- (вместо стандартного дропдауна; шёпот по нику остаётся на левом клике),
+-- всё остальное уходит в оригинал. Меню в нашем окне лога не задвоено:
+-- OnHyperlinkClick у SMF форвардит только левую кнопку.
+do
+    local origSetItemRef = SetItemRef
+    SetItemRef = function(link, text, button, chatFrame)
+        if type(link) == "string" and strsub(link, 1, 7) == "player:"
+            and button == "RightButton" and ShowMenu then
+            local name = strsub(link, 8)
+            local colon = strfind(name, ":")
+            if colon then name = strsub(name, 1, colon - 1) end
+            if DTCC.NameKey(name) ~= "" then
+                ShowMenu({ mode = "chat", name = name })
+                return
+            end
+        end
+        return origSetItemRef(link, text, button, chatFrame)
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -870,8 +965,10 @@ LogRenderInner = function()
     if logSlider then
         if maxOff > 0 then logSlider:Show() else logSlider:Hide() end
         logSlider:SetMinMaxValues(0, maxOff)
-        local cur = floor((tonumber(logSlider:GetValue()) or 0) + 0.5)
-        if cur ~= off then logSlider:SetValue(off) end
+        -- ползунок 3.3.5 не раскладывается, пока ни разу не позвали SetValue:
+        -- до первого клика по стрелке его «нет» (плейтест v1.10.2) — ставим
+        -- всегда; OnValueChanged при том же офсете выходят по guard'у
+        logSlider:SetValue(off)
     end
 end
 
@@ -1465,6 +1562,14 @@ local function BuildLogPage(parent)
     logSlider:SetValueStep(1)
     logSlider:SetMinMaxValues(0, 0)
     logSlider:Hide()
+    -- без EnableMouse перетаскивание ползунка не доходит до слайдера:
+    -- мышиный ввод проваливается к окну (OnMouseDown → StartMoving — окно
+    -- «двигалось» вместо прокрутки). Колесо — отдельный флаг (3.3.5)
+    logSlider:EnableMouse(true)
+    logSlider:EnableMouseWheel(true)
+    logSlider:SetScript("OnMouseWheel", function(_, delta)
+        SetLogOffset(logOff - (delta > 0 and 3 or -3))
+    end)
 
     local upBtn = _G["DTCCWin_LogScrollScrollUpButton"]
     local downBtn = _G["DTCCWin_LogScrollScrollDownButton"]
@@ -1488,19 +1593,23 @@ local function BuildLogPage(parent)
     logPage:SetScript("OnMouseWheel", function(_, delta)
         SetLogOffset(logOff - (delta > 0 and 3 or -3))
     end)
+    -- скрипт колеса без EnableMouseWheel не работает вовсе (3.3.5: это
+    -- ОТДЕЛЬНЫЙ флаг, не EnableMouse) — отсюда зум камеры в плейтестах
+    logPage:EnableMouseWheel(true)
 
     logRows = {}
     for i = 1, ROW_POOL do
         local row = CreateFrame("Frame", nil, logPage)
         row:SetHeight(ROW_H)
 
-        -- колесо мыши: клиент 3.3.5 отдаёт событие только mouse-enabled
-        -- фрейму под курсором (head/smf перехватывают у страницы, поэтому
-        -- скрипт нужен на каждой поверхности строки), иначе зумит камеру
+        -- колесо мыши: клиент 3.3.5 отдаёт событие только фрейму под
+        -- курсором с включёнными мышью И колесом (head/smf перехватывают
+        -- у страницы), иначе зумит камеру
         local wheel = function(_, delta)
             SetLogOffset(logOff - (delta > 0 and 3 or -3))
         end
         row:EnableMouse(true)
+        row:EnableMouseWheel(true)
         row:SetScript("OnMouseWheel", wheel)
 
         -- левая часть строки (время + игрок): кнопка с подсветкой, тултипом и ПКМ-меню
@@ -1525,6 +1634,7 @@ local function BuildLogPage(parent)
         head.nameF:SetJustifyH("LEFT")
         head:SetScript("OnEnter", LogTooltip)
         head:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        head:EnableMouseWheel(true)
         head:SetScript("OnMouseWheel", wheel)
         head:SetScript("OnClick", function(self, mouse)
             if mouse == "RightButton" and self.entry then
@@ -1545,7 +1655,11 @@ local function BuildLogPage(parent)
         smf:SetJustifyH("LEFT")
         smf:SetFont(logFontPath, logFontHeight) -- шрифт игрового чата, как у колонок
         smf:SetScript("OnHyperlinkClick", function(self, link, text, button)
-            SetItemRef(link, text, button, self)
+            -- только левая: правый клик по нику должен открыть меню строки
+            -- лога (OnMouseUp), а не второе меню из перехвата SetItemRef
+            if button == "LeftButton" then
+                SetItemRef(link, text, button, self)
+            end
         end)
         -- тултип при наведении на предмет: OnHyperlinkEnter появился после 3.3.5,
         -- подключаем через pcall — старый клиент просто не будет его звать
@@ -1563,6 +1677,7 @@ local function BuildLogPage(parent)
                 ShowMenu({ mode = "log", entry = row.entry })
             end
         end)
+        smf:EnableMouseWheel(true)
         smf:SetScript("OnMouseWheel", wheel)
         row.smf = smf
 

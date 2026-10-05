@@ -78,6 +78,27 @@ function DTCC.Blacklist_MakePermanent(rawName)
     return true
 end
 
+-- Продлить бан: срок прибавляется к максимуму(сейчас, текущий конец бана) —
+-- повторное продление не сбрасывает остаток; duration <= 0 = снять срок.
+-- Возвращает новый expires (число) или nil (бессрочный), false — записи нет.
+function DTCC.Blacklist_Extend(rawName, duration)
+    if not DTCC.db then return false end
+    local key = DTCC.NameKey(rawName)
+    local e = DTCC.db.blacklist[key]
+    if not e then return false end
+    duration = tonumber(duration) or 0
+    if duration <= 0 then
+        e.expires = nil
+        DTCC.FireEvent("ListsChanged")
+        return nil
+    end
+    local now = time()
+    local base = (e.expires and e.expires > now) and e.expires or now
+    e.expires = base + duration
+    DTCC.FireEvent("ListsChanged")
+    return e.expires
+end
+
 -- Удалить все истёкшие записи; возвращает количество удалённых.
 function DTCC.Blacklist_PurgeExpired()
     if not DTCC.db then return 0 end

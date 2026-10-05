@@ -108,6 +108,15 @@ README.md — пользовательская документация (не з
    в записях это прыжок на сотни строк); + `OnMouseWheel` на странице; офсет
    в записях, maxOff — проход с конца, высоты строк кэшировать по
    «запись + ширина колонки». Пример: вкладка «Лог» в Window.lua.
+   СКРОЛЛ-ГРАБЛИ 3.3.5 (плейтест v1.10.2): (а) скрипт OnMouseWheel не
+   работает без ОТДЕЛЬНОГО флага `EnableMouseWheel(true)` (EnableMouse
+   не заменяет его — колесо зумило камеру); флаг+скрипт нужны на КАЖДОЙ
+   поверхности (страница + строка + head-кнопка + SMF — событие не
+   всплывает к родителям); (б) ползунок Slider не раскладывается, пока
+   ни разу не позвали `SetValue` — после SetMinMaxValues ставить SetValue
+   ВСЕГДА; (в) перетаскивание ползунка требует `slider:EnableMouse(true)`
+   — иначе нажатие проваливается к родителю (окно OnMouseDown →
+   StartMoving — окно «двигалось» вместо прокрутки).
    И не экономить вертикаль в шапке списка: чекбокс-шаблон 26px + подписи
    ~15px на строку — список, поднятый выше, наезжает на галочки/заголовки
    (LOG_TOP=98 во вкладке «Лог»).
@@ -124,12 +133,12 @@ README.md — пользовательская документация (не з
 |---|---|
 | Core.lua | неймспейс, цвета, `LOCAL_SOURCES`/`sourceBySrc` (локальные чаты-источники: src/label/color/events), UTF-8 (`utf8lower`, `Truncate`, `NameKey`, `CleanName`), `HexToRGB`, `SplitChannelList` (настройка «Каналы»), время/сроки (`DTCC.DURATIONS`, `FormatRemaining`), шина событий, `DEFAULTS` + `CopyDefaults` + миграции `dbVersion` (v2: worldChannel «Solo» → список), слэш `/dtcc` (`/dcc`), ADDON_LOADED/PLAYER_LOGIN |
 | Widgets.lua | `DTCC.UI`: `PopupMenu`/`CloseMenu` (меню + ловец), `CreateDropdown(parent, items, get, set, width, name, tooltip)`, `Check`. Свои, не Blizzard |
-| Lists.lua | ЧС: `Blacklist_Add/Remove/Get/MakePermanent/PurgeExpired/GetSorted(sortKey, sortDir)` (ключи `name\|added\|expires\|reason` × `asc\|desc`; `expires=nil` = math.huge — бессрочные в конце при возр.). Друзья: `Friends_*` |
+| Lists.lua | ЧС: `Blacklist_Add/Remove/Get/MakePermanent/Extend/GetSorted(sortKey, sortDir)` (ключи `name\|added\|expires\|reason` × `asc\|desc`; `expires=nil` = math.huge — бессрочные в конце при возр.); `Blacklist_Extend(name, сек)` прибавляет к остатку (истёкший — от now, 0 = снять срок). Друзья: `Friends_*` |
 | Censor.lua | слова: `Censor_SetWords/NormalizeList/Add/Remove` (разделители `, ; \n`, нормализация: utf8lower+тримминг+дедуп+сортировка; NormalizeList — без записи, для кнопок форматирования), кэш, `CensorFind`, `CensorMask` (звёзды по СИМВОЛАМ, не байтам) |
 | Capture.lua | 3-уровневый парсер (strict mod-world-chat → tolerant → RAW), `ParseWorldMessage`, `ExtractPlayerColor` (|cff перед |Hplayer: — цвет фракции) + память `RememberPlayerColor`/`GetPlayerColor` (`db.factions` по NameKey), `LogAdd(name, msg, flags, meta)` (meta: c/ch/src), запросы к логу `PrepareLogQuery`/`LogEntryMatches`/`LogSearch`/`RemoveLogEntries` (общий предикат для поиска И удаления по фильтрам), `SendWorldMessage` (`.chat` через SAY), фильтры CHAT_MSG_SYSTEM/CHANNEL (каналы — список из `SplitChannelList`) + `LocalChatFilter` для локальных чатов (say/yell/party/raid/guild/whisper — ТОЛЬКО логирование, всегда возвращает nil), конвейер `ProcessChatLine` |
 | Alerts.lua | `DTCC.SOUNDS`, пул попапов, `FireProximityAlert`, детект (mouseover/target/focus/say/yell/emote) |
 | Options.lua | панель Interface Options (`NewCheck/NewDropdown/NewButton/NewEdit/NewSection`, `Refresh` по SettingsChanged, StaticPopup-диалоги очистки лога/сброса) |
-| Window.lua | окно: вкладки ЧС (сортировка по заголовкам + колонка «Добавлен»), Друзья, Лог (галочки-фильтры в ОДИН ряд с переносом при нехватке ширины: `LogLayoutChecks` — источники «Мировой чат»/каналы/локальные чаты (logSourceChecks по `LOCAL_SOURCES`, состояние `logShowSources`)/«RAW», затем типы; сдвигает счётчик/заголовки/слайдер и `logTop`; вызывается из `LayoutAllPages` при ресайзе; галочки каналов — динамика: `LogRebuildChannelChecks` по настройке «Каналы», перестройка на SettingsChanged; смена фильтров — `LogFilterChanged` (сброс прокрутки + рефреш); шрифт записей — из игрового чата `LogChatFont` (SMF+колонки+`logMeasure` — одинаковые, иначе высоты строк не сойдутся); теги `LogEntryTag`/`LogBareTag` ([Канал] бирюзовый, локальные — цвет как в чате); цвет имени автора — ЧС/друг поверх, иначе цвет фракции; «Очистить лог» → `DTCC.RequestClearLog` (удаляет записи по текущим фильтрам через `BuildLogOpts`+`RemoveLogEntries`, счётчик в диалоге, запрос в `DTCC._clearQuery`); строки переменной высоты: сообщение в дочернем SMF на всю ширину с переносом, кликабельные |Hitem|-ссылки; свой Slider + колесо; LogChanged вайпает кэш высот), Цензура (единственный редактор слов на всю вкладку: `CNRefresh(true)` при открытии грузит слова в поле, `cnFieldDirty` защищает недопечатанное от затирания, `CNLayout` растягивает EditBox под вкладку); контекстное меню `MenuDescriptor` (режимы `bl/friend/log`). Окно растягивается за грип `DTCCWindowResizeGrip` (`SetResizable` + `StartSizing("BOTTOMRIGHT")`, на время растягивания `SetClampedToScreen(false)`): по вкладкам-спискам ЧС/Друзья тройка `XXLayout` (число видимых строк + ширина последней колонки) → `XXRender` (из кэша — вызывается на каждый `OnSizeChanged` во время растягивания, полные поиск/сортировка там нельзя — фризы) → `XXRefresh` (полный пересчёт); лог: `LogRefresh` (поиск+подпись) → `LogRender` (перемер только видимых+последней страницы, кэш высот `logHeightCache` по «запись+ширина», перенос считает `LogCountLines` по ширинам слов `LogWordWidth`). Пул строк `ROW_POOL` (32), offset подрезает `ClampScroll` (ЧС/друзья) / maxOff-проход (лог), текст в колонки укладывает `FitText`. Размер/позиция — `settings.winW/winH/winX/winY` |
+| Window.lua | окно: вкладки ЧС (сортировка по заголовкам + колонка «Добавлен»), Друзья, Лог (галочки-фильтры в ОДИН ряд с переносом при нехватке ширины: `LogLayoutChecks` — источники «Мировой чат»/каналы/локальные чаты (logSourceChecks по `LOCAL_SOURCES`, состояние `logShowSources`)/«RAW», затем типы; сдвигает счётчик/заголовки/слайдер и `logTop`; вызывается из `LayoutAllPages` при ресайзе; галочки каналов — динамика: `LogRebuildChannelChecks` по настройке «Каналы», перестройка на SettingsChanged; смена фильтров — `LogFilterChanged` (сброс прокрутки + рефреш); шрифт записей — из игрового чата `LogChatFont` (SMF+колонки+`logMeasure` — одинаковые, иначе высоты строк не сойдутся); теги `LogEntryTag`/`LogBareTag` ([Канал] бирюзовый, локальные — цвет как в чате); цвет имени автора — ЧС/друг поверх, иначе цвет фракции; «Очистить лог» → `DTCC.RequestClearLog` (удаляет записи по текущим фильтрам через `BuildLogOpts`+`RemoveLogEntries`, счётчик в диалоге, запрос в `DTCC._clearQuery`); строки переменной высоты: сообщение в дочернем SMF на всю ширину с переносом, кликабельные |Hitem|-ссылки (OnHyperlinkClick форвардит ТОЛЬКО левую кнопку — правая у меню строки); свой Slider + колесо (EnableMouseWheel на page/row/head/smf/slider); LogChanged вайпает кэш высот), Цензура (единственный редактор слов на всю вкладку: `CNRefresh(true)` при открытии грузит слова в поле, `cnFieldDirty` защищает недопечатанное от затирания, `CNLayout` растягивает EditBox под вкладку); контекстное меню `MenuDescriptor` (режимы `bl` (в т.ч. «Продлить на…» — Blacklist_Extend) `/friend/log/chat`; `chat` — ПКМ по нику в игровом чате: перехват глобального `SetItemRef` (обёртка до оригинала, только `player:`+RightButton, левый клик = шёпот как раньше), пункты в ЧС день/неделя/навсегда + друзья). Окно растягивается за грип `DTCCWindowResizeGrip` (`SetResizable` + `StartSizing("BOTTOMRIGHT")`, на время растягивания `SetClampedToScreen(false)`): по вкладкам-спискам ЧС/Друзья тройка `XXLayout` (число видимых строк + ширина последней колонки) → `XXRender` (из кэша — вызывается на каждый `OnSizeChanged` во время растягивания, полные поиск/сортировка там нельзя — фризы) → `XXRefresh` (полный пересчёт); лог: `LogRefresh` (поиск+подпись) → `LogRender` (перемер только видимых+последней страницы, кэш высот `logHeightCache` по «запись+ширина», перенос считает `LogCountLines` по ширинам слов `LogWordWidth`). Пул строк `ROW_POOL` (32), offset подрезает `ClampScroll` (ЧС/друзья) / maxOff-проход (лог), текст в колонки укладывает `FitText`. Размер/позиция — `settings.winW/winH/winX/winY` |
 | Minimap.lua | кнопка миникарты (`RegisterForDrag`, защита от коллекторов DragonUI) |
 
 Порядок конвейера в `ProcessChatLine` (менять осторожно): флаги списков →
@@ -180,6 +189,23 @@ RAW типы не касаются) → скрытие ЧС (hideBlacklisted/з�
 
 ## Текущее состояние (обновляй при релизе)
 
+- **v1.11.0 (2026-10-05)**: по плейтесту v1.10.2. (1) СКРОЛЛ ЛОГА:
+  колесо зумило камеру — OnMouseWheel не работает без ОТДЕЛЬНОГО флага
+  `EnableMouseWheel(true)` (теперь на page/row/head/smf/slider; правило
+  10 дополнено); ползунка не было до клика по стрелке — Slider не
+  раскладывает thumb без явного SetValue (теперь ставим всегда после
+  SetMinMaxValues); перетаскивание ползунка не работало — нужно
+  `slider:EnableMouse(true)` (нажатие проваливалось к окну → StartMoving).
+  (2) Меню строки ЧС: «Продлить на 1 день/3 дня/неделю/месяц» —
+  `DTCC.Blacklist_Extend(name, сек)` (прибавляет к остатку, истёкший —
+  от now, 0 = бессрочно). (3) ПКМ по нику в ИГРОВОМ чате: обёртка
+  глобального SetItemRef (player:+RightButton → наше меню: ЧС
+  день/неделя/навсегда, друзья; левый клик = шёпот как в клиенте);
+  OnHyperlinkClick у SMF лога форвардит только левую кнопку, чтобы
+  правый клик не открывал два меню. Тесты: логика 133/133, UI 167/167
+  (продление, чат-меню, ползунок/SetValue, колесо-флаги). ПРАВКА .TOC —
+  полный перезапуск. Ждёт плейтеста: колесо+ползунок в игре, чат-меню
+  на живом мировом чате.
 - **v1.10.2 (2026-10-05)**: по плейтесту v1.10.1. (1) ПУСТЫЕ СООБЩЕНИЯ ДО
   РЕСАЙЗА ОСТАВАЛИСЬ (снять все галочки → включить Solo → только время+ник):
   толчок высоты клиент слипает в «нет изменения» — единственные надёжные
