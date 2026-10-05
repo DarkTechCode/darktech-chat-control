@@ -444,16 +444,24 @@ local function BuildPanel()
 
     local chanLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     chanLabel:SetPoint("TOPLEFT", 10, CY)
-    chanLabel:SetText("Канал (если сервер доставляет чат каналом, а не системными):")
+    chanLabel:SetText("Каналы через запятую (если сервер доставляет чат каналами, а не системными):")
     Advance(16)
 
-    local chanEdit = NewEdit(content, 160, function(text)
+    local chanEdit = NewEdit(content, 240, function(text)
         DTCC.db.settings.worldChannel = strtrim(text or "")
-        DTCC.Print("канал мирового чата: " ..
+        DTCC.Print("каналы мирового чата: " ..
             (DTCC.db.settings.worldChannel ~= "" and DTCC.db.settings.worldChannel or "выкл (системные сообщения)"))
     end)
     chanEdit:SetPoint("TOPLEFT", 10, CY)
     Advance(28)
+
+    local chanHint = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    chanHint:SetPoint("TOPLEFT", 10, CY)
+    chanHint:SetWidth(510)
+    chanHint:SetJustifyH("LEFT")
+    chanHint:SetTextColor(0.6, 0.6, 0.6)
+    chanHint:SetText("Например: Solo, Solo Progress. Для каждого канала на вкладке «Лог» появится своя галочка-фильтр.")
+    Advance(20)
 
     local cbDebug = NewCheck(content, "Режим отладки (печатать все системные сообщения с игроками)",
         nil,

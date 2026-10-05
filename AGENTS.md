@@ -110,14 +110,14 @@ README.md — пользовательская документация (не з
 
 | Файл | Ответственность / ключевые точки |
 |---|---|
-| Core.lua | неймспейс, цвета, UTF-8 (`utf8lower`, `Truncate`, `NameKey`, `CleanName`), время/сроки (`DTCC.DURATIONS`, `FormatRemaining`), шина событий, `DEFAULTS` + `CopyDefaults`, слэш `/dtcc` (`/dcc`), ADDON_LOADED/PLAYER_LOGIN |
+| Core.lua | неймспейс, цвета, UTF-8 (`utf8lower`, `Truncate`, `NameKey`, `CleanName`), `HexToRGB`, `SplitChannelList` (настройка «Каналы»), время/сроки (`DTCC.DURATIONS`, `FormatRemaining`), шина событий, `DEFAULTS` + `CopyDefaults` + миграции `dbVersion` (v2: worldChannel «Solo» → список), слэш `/dtcc` (`/dcc`), ADDON_LOADED/PLAYER_LOGIN |
 | Widgets.lua | `DTCC.UI`: `PopupMenu`/`CloseMenu` (меню + ловец), `CreateDropdown(parent, items, get, set, width, name, tooltip)`, `Check`. Свои, не Blizzard |
 | Lists.lua | ЧС: `Blacklist_Add/Remove/Get/MakePermanent/PurgeExpired/GetSorted(sortKey, sortDir)` (ключи `name\|added\|expires\|reason` × `asc\|desc`; `expires=nil` = math.huge — бессрочные в конце при возр.). Друзья: `Friends_*` |
 | Censor.lua | слова: `Censor_SetWords/NormalizeList/Add/Remove` (разделители `, ; \n`, нормализация: utf8lower+тримминг+дедуп+сортировка; NormalizeList — без записи, для кнопок форматирования), кэш, `CensorFind`, `CensorMask` (звёзды по СИМВОЛАМ, не байтам) |
-| Capture.lua | 3-уровневый парсер (strict mod-world-chat → tolerant → RAW), `ParseWorldMessage`, `LogAdd/LogSearch/ClearLog`, `SendWorldMessage` (`.chat` через SAY), фильтры CHAT_MSG_SYSTEM/CHANNEL, конвейер `ProcessChatLine` |
+| Capture.lua | 3-уровневый парсер (strict mod-world-chat → tolerant → RAW), `ParseWorldMessage`, `ExtractPlayerColor` (|cff перед |Hplayer: — цвет фракции) + память `RememberPlayerColor`/`GetPlayerColor` (`db.factions` по NameKey), `LogAdd(name, msg, flags, color, channel)` / `LogSearch` (`channels` — карта «канал→bool») / `ClearLog`, `SendWorldMessage` (`.chat` через SAY), фильтры CHAT_MSG_SYSTEM/CHANNEL (каналов — список из `SplitChannelList`), конвейер `ProcessChatLine` |
 | Alerts.lua | `DTCC.SOUNDS`, пул попапов, `FireProximityAlert`, детект (mouseover/target/focus/say/yell/emote) |
 | Options.lua | панель Interface Options (`NewCheck/NewDropdown/NewButton/NewEdit/NewSection`, `Refresh` по SettingsChanged, StaticPopup-диалоги очистки лога/сброса) |
-| Window.lua | окно: вкладки ЧС (сортировка по заголовкам + колонка «Добавлен»), Друзья, Лог (галочки-фильтры «Игроки/RAW/типы» в одну строку, состояние в `settings.logShowPlayers/logShowRaw/logFilterFlags`; строки переменной высоты: сообщение в дочернем SMF на всю ширину с переносом, кликабельные |Hitem|-ссылки; свой Slider + колесо; кнопка «Очистить лог» → StaticPopup), Цензура (единственный редактор слов на всю вкладку: `CNRefresh(true)` при открытии грузит слова в поле, `cnFieldDirty` защищает недопечатанное от затирания, `CNLayout` растягивает EditBox под вкладку); контекстное меню `MenuDescriptor` (режимы `bl/friend/log`). Окно растягивается за грип `DTCCWindowResizeGrip` (`SetResizable` + `StartSizing("BOTTOMRIGHT")`, на время растягивания `SetClampedToScreen(false)`): по вкладкам-спискам ЧС/Друзья тройка `XXLayout` (число видимых строк + ширина последней колонки) → `XXRender` (из кэша — вызывается на каждый `OnSizeChanged` во время растягивания, полные поиск/сортировка там нельзя — фризы) → `XXRefresh` (полный пересчёт); лог: `LogRefresh` (поиск+подпись) → `LogRender` (перемер только видимых+последней страницы, кэш высот `logHeightCache` по «запись+ширина», перенос считает `LogCountLines` по ширинам слов `LogWordWidth`). Пул строк `ROW_POOL` (32), offset подрезает `ClampScroll` (ЧС/друзья) / maxOff-проход (лог), текст в колонки укладывает `FitText`. Размер/позиция — `settings.winW/winH/winX/winY` |
+| Window.lua | окно: вкладки ЧС (сортировка по заголовкам + колонка «Добавлен»), Друзья, Лог (галочки-фильтры в ДВА ряда: источники «Мировой чат»/«RAW»/каналы и типы; состояние в `settings.logShowPlayers/logShowRaw/logFilterFlags/logChannelShow`; галочки каналов — динамика: `LogRebuildChannelChecks`/`LogLayoutSourceRow` по настройке «Каналы», перестройка на SettingsChanged; цвет имени автора — ЧС/друг поверх, иначе цвет фракции `e.c or GetPlayerColor`; тег `[Канал]` перед сообщением канальной записи, в замере высоты — `LogBareText`; строки переменной высоты: сообщение в дочернем SMF на всю ширину с переносом, кликабельные |Hitem|-ссылки; свой Slider + колесо; кнопка «Очистить лог» → StaticPopup), Цензура (единственный редактор слов на всю вкладку: `CNRefresh(true)` при открытии грузит слова в поле, `cnFieldDirty` защищает недопечатанное от затирания, `CNLayout` растягивает EditBox под вкладку); контекстное меню `MenuDescriptor` (режимы `bl/friend/log`). Окно растягивается за грип `DTCCWindowResizeGrip` (`SetResizable` + `StartSizing("BOTTOMRIGHT")`, на время растягивания `SetClampedToScreen(false)`): по вкладкам-спискам ЧС/Друзья тройка `XXLayout` (число видимых строк + ширина последней колонки) → `XXRender` (из кэша — вызывается на каждый `OnSizeChanged` во время растягивания, полные поиск/сортировка там нельзя — фризы) → `XXRefresh` (полный пересчёт); лог: `LogRefresh` (поиск+подпись) → `LogRender` (перемер только видимых+последней страницы, кэш высот `logHeightCache` по «запись+ширина», перенос считает `LogCountLines` по ширинам слов `LogWordWidth`). Пул строк `ROW_POOL` (32), offset подрезает `ClampScroll` (ЧС/друзья) / maxOff-проход (лог), текст в колонки укладывает `FitText`. Размер/позиция — `settings.winW/winH/winX/winY` |
 | Minimap.lua | кнопка миникарты (`RegisterForDrag`, защита от коллекторов DragonUI) |
 
 Порядок конвейера в `ProcessChatLine` (менять осторожно): флаги списков →
@@ -165,6 +165,21 @@ README.md — пользовательская документация (не з
 
 ## Текущее состояние (обновляй при релизе)
 
+- **v1.6.0 (2026-10-05)**: каналы-источники списком через запятую
+  (`worldChannel`; миграция dbVersion 1→2: одиночное имя «Solo» один раз
+  дополняется «Solo, Solo Progress» — старую версию базы читать ДО
+  CopyDefaults, иначе он сам проставит новую версию и миграция не увидит
+  сигнал). Записи лога: новые поля `c` ("RRGGBB" цвета имени-фракции из
+  `|cff` перед `|Hplayer:`) и `ch` (канал); память цветов `db.factions`
+  (NameKey→hex, кап 5000 с wipe) — канальные сообщения (цвет не передают)
+  берут цвет оттуда. Вкладка «Лог»: галочки в два ряда — источники
+  («Мировой чат» [было «Игроки»] + динамические галочки каналов
+  `LogRebuildChannelChecks`, y=-30) и типы (y=-58); LOG_TOP 98→126, счётчик
+  -88, заголовки -106; `LogSearch({channels={[канал lower]=bool}})`,
+  источники независимы (мировой чат не глушит каналы); цвет имени: ЧС/друг
+  поверх фракции; тег `|cff20b2aa[Канал]|r` перед сообщением (учёт в
+  `LogBareText` для высоты). Настройки: «Каналы через запятую» + подсказка.
+  ПРАВКА .TOC (версия) — нужен полный перезапуск клиента. Ждёт плейтеста.
 - **v1.5.2 (2026-10-05)**: раскладка галочек-фильтров лога: сцепление
   «LEFT к RIGHT рамки предыдущего чекбокса» ставило следующий квадрат поверх
   подписи предыдущего (рамка 26px, подпись вне её — «квадраты через равные

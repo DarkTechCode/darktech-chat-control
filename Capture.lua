@@ -15,8 +15,15 @@
          в лог КАК ЕСТЬ (метка RAW), без цензуры/скрытия/авто-ЧС.
     Дополнительно формат «[Тег] Имя: текст» (включается тегом в настройках).
 
-    Режим «канал»: если сервер доставляет сообщения каналом (CHAT_MSG_CHANNEL),
-    укажите его имя в настройках («Источник мирового чата»).
+    Режим «каналы»: если сервер доставляет сообщения каналами (CHAT_MSG_CHANNEL),
+    укажите их имена в настройках («Каналы», через запятую — например
+    «Solo, Solo Progress»). Сообщения каждого канала проходят полный конвейер
+    (цензура/ЧС/лог) и помечаются в логе именем канала (поле ch).
+
+    Цвет автора: сервер красит имена в мировом чате по фракции (|cff… перед
+    |Hplayer:). Цвет извлекается, пишется в запись лога и запоминается по
+    игроку (db.factions) — сообщения каналов, которые цвет сами не передают,
+    получают запомненный цвет того же игрока.
 
     Скрытие: фильтр возвращает true — строку покажет наш вариант (или не
     покажет никто). Замена: добавляем свою строку через self:AddMessage(...).
@@ -54,6 +61,15 @@ function DTCC.StripAll(text)
     text = gsub(text, "|T[^|]*|t", "")
     text = gsub(text, "|h", "")
     return text
+end
+
+-- Цвет имени автора из строки мирового чата: |cffAARRGGBB, обёртывающий ссылку
+-- игрока (|cff…|Hplayer:). Сервер красит имена по фракции — этот же цвет
+-- показываем в логе. Возвращает "RRGGBB" либо nil.
+function DTCC.ExtractPlayerColor(text)
+    local argb = string.match(tostring(text or ""), "|c(%x%x%x%x%x%x%x%x)|Hplayer:")
+    if not argb then return nil end
+    return strsub(argb, 3)
 end
 
 --------------------------------------------------------------------------------
@@ -164,11 +180,36 @@ end
 -- Лог
 --------------------------------------------------------------------------------
 
-function DTCC.LogAdd(name, msg, flags)
+-- Запомнить цвет имени игрока из мирового чата (.chat): сообщения каналов
+-- (Solo и т.п.) приходят без цвета — цвет автора берём из этой памяти.
+function DTCC.RememberPlayerColor(name, color)
+    local db = DTCC.db
+    if not db or not color or color == "" then return end
+    db.factions = db.factions or {}
+    local key = DTCC.NameKey(name)
+    if key == "" or db.factions[key] == color then return end
+    if db.factions[key] == nil then
+        -- не даём таблице расти бесконечно; считаем только при новом ключе
+        local n = 0
+        for _ in pairs(db.factions) do n = n + 1 end
+        if n >= 5000 then wipe(db.factions) end
+    end
+    db.factions[key] = color
+end
+
+function DTCC.GetPlayerColor(name)
+    local db = DTCC.db
+    if not db or not db.factions then return nil end
+    return db.factions[DTCC.NameKey(name)]
+end
+
+-- color — "RRGGBB" цвета имени (фракция), channel — имя канала для записей
+-- из CHAT_MSG_CHANNEL (у сообщений .chat поле не пишется).
+function DTCC.LogAdd(name, msg, flags, color, channel)
     local db = DTCC.db
     if not db or not db.settings.logEnabled then return end
     local log = db.log
-    log[#log + 1] = { t = time(), p = name, m = msg, f = flags or 0 }
+    log[#log + 1] = { t = time(), p = name, m = msg, f = flags or 0, c = color, ch = channel }
     -- подрезаем с запасом, чтобы не копировать массив на каждом сообщении
     local limit = tonumber(db.settings.logLimit) or 3000
     if limit > 0 and #log > limit + 50 then
@@ -188,10 +229,12 @@ function DTCC.ClearLog()
     DTCC.FireEvent("LogChanged")
 end
 
--- Поиск по логу. opts: { text, name, minT, flags, includePlayers, includeRaw }.
---   flags — совпадение с любым из указанных битов (0 = любой тип);
---   includePlayers/includeRaw — источники: обычные сообщения игроков и
---   RAW-записи (системные строки с ссылкой игрока). nil = источник включён.
+-- Поиск по логу. opts: { text, name, minT, flags, channels, includePlayers, includeRaw }.
+--   flags — совпадение с любым из указанных битов (0 = любой тип; RAW не касается);
+--   channels — таблица «ключ канала (нижний регистр) -> bool»: записи каналов
+--     показываются, только если значение не false (nil = каналы не фильтровать);
+--   includePlayers/includeRaw — источники: сообщения мирового чата (.chat) и
+--     RAW-записи. nil = источник включён.
 -- Возвращает (результат-новые-сверху, всего найдено).
 function DTCC.LogSearch(opts)
     local db = DTCC.db
@@ -202,6 +245,7 @@ function DTCC.LogSearch(opts)
     local nameF = opts.name and DTCC.utf8lower(strtrim(opts.name)) or ""
     local minT = opts.minT or 0
     local needFlags = opts.flags or 0
+    local channels = opts.channels
     local includePlayers = opts.includePlayers
     local includeRaw = opts.includeRaw
     if includePlayers == nil then includePlayers = true end
@@ -212,12 +256,17 @@ function DTCC.LogSearch(opts)
     for i = #log, 1, -1 do
         local e = log[i]
         if e and (not e.t or e.t >= minT) then
-            local ok = true
-            if bit.band(e.f or 0, DTCC.FLAG_RAW) ~= 0 then
+            local isRaw = bit.band(e.f or 0, DTCC.FLAG_RAW) ~= 0
+            local ok
+            if isRaw then
                 ok = includeRaw
+            elseif e.ch and channels ~= nil then
+                ok = channels[DTCC.utf8lower(e.ch)] ~= false
             else
                 ok = includePlayers
-                    and (needFlags == 0 or bit.band(e.f or 0, needFlags) ~= 0)
+            end
+            if ok and not isRaw then
+                ok = needFlags == 0 or bit.band(e.f or 0, needFlags) ~= 0
             end
             if ok and textF ~= "" then
                 ok = string.find(DTCC.utf8lower(tostring(e.m or "")), textF, 1, true) ~= nil
@@ -254,7 +303,8 @@ end
 -- Общий конвейер обработки сообщения мирового чата
 --------------------------------------------------------------------------------
 
-local function ProcessChatLine(self, name, bare, prefix)
+-- color/ch пробрасываются в лог (цвет имени-фракции, имя канала)
+local function ProcessChatLine(self, name, bare, prefix, color, channel)
     local db = DTCC.db
     if not db then return end
     local s = db.settings
@@ -291,7 +341,7 @@ local function ProcessChatLine(self, name, bare, prefix)
     end
 
     ------------------------------------------------------------------ лог
-    DTCC.LogAdd(name, bare, flags)
+    DTCC.LogAdd(name, bare, flags, color, channel)
 
     ------------------------------------------------------------------ ЧС: скрыть
     if blEntry and s.hideBlacklisted then
@@ -360,7 +410,11 @@ local function SystemFilter(self, event, text)
             DTCC.Print(DTCC.COLORS.green .. "формат мирового чата распознан — сообщения пишутся в лог|r " ..
                 DTCC.COLORS.grey .. "(/dtcc log)")
         end
-        return ProcessChatLine(self, name, bare, prefix)
+        -- цвет имени (фракция) из самой строки: запоминаем по игроку — каналы
+        -- цвет не передают и берут его из памяти
+        local color = DTCC.ExtractPlayerColor(text)
+        if color then DTCC.RememberPlayerColor(name, color) end
+        return ProcessChatLine(self, name, bare, prefix, color)
     end
 
     -- Уровень 3 (сырой): строка со ссылкой на игрока, но нестандартного вида.
@@ -370,7 +424,9 @@ local function SystemFilter(self, event, text)
         local rawName = DTCC.CleanName(string.match(text, "|Hplayer:([^|]+)|h") or "")
         local rawMsg = strtrim(DTCC.StripAll(text))
         if rawName ~= "" and rawMsg ~= "" then
-            DTCC.LogAdd(rawName, rawMsg, DTCC.FLAG_RAW)
+            local rawColor = DTCC.ExtractPlayerColor(text)
+            if rawColor then DTCC.RememberPlayerColor(rawName, rawColor) end
+            DTCC.LogAdd(rawName, rawMsg, DTCC.FLAG_RAW, rawColor)
             if s.debug then
                 DTCC.Print(DTCC.COLORS.yellow .. "[debug] формат не распознан, " ..
                     "записано в лог как RAW: " .. DTCC.DebugEscape(text))
@@ -384,7 +440,8 @@ end
 ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", SystemFilter)
 
 --------------------------------------------------------------------------------
--- Фильтр сообщений канала (режим «канал», включается именем канала в настройках)
+-- Фильтр сообщений каналов (режим «каналы»: список имён в настройке,
+-- сообщения каждого канала проходят полный конвейер и помечаются в логе)
 --------------------------------------------------------------------------------
 
 local function ChannelFilter(self, event, msg, sender, lang, chanWithNumber)
@@ -401,8 +458,19 @@ local function ChannelFilter(self, event, msg, sender, lang, chanWithNumber)
     end
 
     if not s.enabled then return end
-    if s.worldChannel == "" then return end
-    if DTCC.utf8lower(chanName) ~= DTCC.utf8lower(strtrim(s.worldChannel)) then return end
+
+    -- источник «Каналы»: список имён через запятую/точку с запятой
+    local chanList = DTCC.SplitChannelList(s.worldChannel)
+    if #chanList == 0 then return end
+    local chanLow = DTCC.utf8lower(chanName)
+    local matched = false
+    for _, ch in ipairs(chanList) do
+        if DTCC.utf8lower(ch) == chanLow then
+            matched = true
+            break
+        end
+    end
+    if not matched then return end
 
     local name = DTCC.CleanName(tostring(sender or ""))
     if name == "" then return end
@@ -410,7 +478,9 @@ local function ChannelFilter(self, event, msg, sender, lang, chanWithNumber)
     -- пересборка префикса в стиле мирового чата
     local prefix = "|cff20b2aa[" .. chanName .. "]|r |Hplayer:" .. name ..
         "|h|cffFFFFFF" .. name .. "|h|r: "
-    return ProcessChatLine(self, name, tostring(msg or ""), prefix)
+    -- цвет автора каналы не передают: берём запомненный из мирового чата (.chat)
+    return ProcessChatLine(self, name, tostring(msg or ""), prefix,
+        DTCC.GetPlayerColor(name), chanName)
 end
 
 ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", ChannelFilter)

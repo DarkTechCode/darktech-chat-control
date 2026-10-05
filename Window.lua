@@ -4,10 +4,11 @@
     Вкладки:
       1. Чёрный список — добавление/удаление, сроки, причина (ПКМ — меню);
       2. Друзья;
-      3. Лог — поиск по тексту и игроку, фильтры-галочки в одну строку
-         (по умолчанию только сообщения игроков), сообщение на всю ширину
-         с переносом строк и кликабельными ссылками предметов (SMF),
-         действия над автором сообщения через ПКМ;
+      3. Лог — поиск по тексту и игроку, фильтры-галочки в две строки:
+         источники (мировой чат / каналы Solo и Solo Progress / RAW, по
+         умолчанию — мировой чат и каналы) и типы; имя автора — цвет фракции,
+         сообщение на всю ширину с переносом строк и кликабельными ссылками
+         предметов (SMF), действия над автором сообщения через ПКМ;
       4. Цензура — редактор списка слов на всю вкладку (сохранённые слова
          грузятся в поле при открытии, «Построчно»/«Через запятую»
          переформатируют, «Сохранить» записывает), режим, авто-ЧС и срок.
@@ -605,15 +606,20 @@ end
 --------------------------------------------------------------------------------
 -- Вкладка «Лог»
 --
--- Фильтры — галочки в одну строку: «Игроки» (по умолчанию включено, только
--- сообщения мирового чата), «RAW» (системные строки со ссылкой игрока:
--- входы, достижения и т.п.) и типы ЧС/скрытые/цензура/авто-ЧС/друзья
--- (не отмечено ничего = любой тип). Сообщение занимает всю ширину окна
--- и переносится на несколько строк (без «…») — высота строки переменная,
--- поэтому скролл свой (Slider), не FauxScrollFrame. Текст сообщения лежит
--- в ScrollingMessageFrame: ссылки предметов работают как в чате — клик
--- открывает подсказку (тултип при НАВЕДЕНИИ клиент 3.3.5 не поддерживает,
--- обработчик подключён на случай более новых клиентов).
+-- Фильтры — галочки в две строки. Строка 1 — источники: «Мировой чат»
+-- (сообщения .chat; по умолчанию включено), отдельная галочка на каждый канал
+-- из настройки «Каналы» (Solo, Solo Progress… — строятся динамически,
+-- по умолчанию включены) и «RAW» (системные строки со ссылкой игрока: входы,
+-- достижения и т.п.). Строка 2 — типы ЧС/скрытые/цензура/авто-ЧС/друзья
+-- (не отмечено ничего = любой тип). Имя автора окрашено цветом фракции, как
+-- в общем чате (цвет приходит из .chat и запоминается по игроку; сообщения
+-- каналов получают запомненный цвет, перед текстом — тег [Канал]).
+-- Сообщение занимает всю ширину окна и переносится на несколько строк
+-- (без «…») — высота строки переменная, поэтому скролл свой (Slider),
+-- не FauxScrollFrame. Текст сообщения лежит в ScrollingMessageFrame:
+-- ссылки предметов работают как в чате — клик открывает подсказку (тултип
+-- при НАВЕДЕНИИ клиент 3.3.5 не поддерживает, обработчик подключён
+-- на случай более новых клиентов).
 --------------------------------------------------------------------------------
 
 local logPage, logRows, logItems
@@ -621,6 +627,9 @@ local logTextEdit, logNameEdit, logPeriodDD, logCountLabel
 local logSlider
 local logCheckboxes = {}   -- players / raw / bl / hidden / censor / autobl / friend
 local logFlagChecks = {}   -- { { cb = .., flag = .. } } — маска «только эти типы»
+local logChannelChecks = {} -- { { cb = .., key = .., label = .. } } — галочки каналов
+                           -- (динамика по настройке «Каналы»; key = имя в нижнем
+                           -- регистре, nil = галочка скрыта)
 local logPeriodValue = 0
 local logTotal = 0
 local logOff = 0           -- индекс первой видимой записи (0-based, сверху)
@@ -634,8 +643,9 @@ local logRendering = false -- защита от повторного входа 
 local LOG_TIME_W  = 70     -- колонка «Время»
 local LOG_NAME_W  = 86     -- колонка «Игрок»
 local LOG_MSG_X   = 168    -- X колонки «Сообщение» (в координатах строки)
-local LOG_TOP     = 98     -- верх списка: поиск (−4…−26) + галочки 26px (−30…−56)
-                           -- + счётчик (−60…−75) + заголовки (−78…−93)
+local LOG_TOP     = 126    -- верх списка: поиск (−4…−26) + галочки источников
+                           -- 26px (−30…−56) + галочки типов (−58…−84) + счётчик
+                           -- (−88…−103) + заголовки (−106…−121)
 local LOG_BOTTOM  = 8
 
 local PERIODS = {
@@ -701,6 +711,15 @@ local function LogCountLines(text, lineW)
     return n
 end
 
+-- «Голый» текст записи для замера высоты: тег канала + сообщение без кодов
+local function LogBareText(e)
+    local m = DTCC.StripAll(e.m or "")
+    if e.ch and e.ch ~= "" then
+        return "[" .. e.ch .. "] " .. m
+    end
+    return m
+end
+
 -- Высота строки лога: перенос сообщения в несколько строк + запас.
 -- Возвращает (высота строки, высота блока текста для SMF — тем же шрифтом,
 -- без запаса, чтобы текст не «уезжал» вниз внутри более высокой строки).
@@ -708,7 +727,7 @@ end
 local function LogRowHeight(e, msgW)
     local c = logHeightCache[e]
     if c and c.w == msgW then return c.h, c.m end
-    local lines = LogCountLines(DTCC.StripAll(e.m or ""), msgW - 4)
+    local lines = LogCountLines(LogBareText(e), msgW - 4)
     local textH = lines * logLineH
     local h = max(ROW_H, textH + 6)
     local m = textH + 4
@@ -765,12 +784,20 @@ LogRenderInner = function()
             row.head.timeF:SetText(DTCC.FormatTimeShort(e.t))
             row.head.timeF:SetTextColor(0.55, 0.55, 0.55)
             FitText(row.head.nameF, e.p, floor(LOG_NAME_W / 6))
+            -- цвет имени: ЧС/друг — свои (пометки пользователя важнее),
+            -- иначе цвет фракции из записи/памяти (как в общем чате),
+            -- иначе нейтральный
             if DTCC.Blacklist_Get(e.p) then
                 row.head.nameF:SetTextColor(1, 0.35, 0.35)
             elseif DTCC.Friends_Get(e.p) then
                 row.head.nameF:SetTextColor(0.4, 1, 0.4)
             else
-                row.head.nameF:SetTextColor(0.85, 0.9, 1)
+                local r, g, b = DTCC.HexToRGB(e.c or DTCC.GetPlayerColor(e.p))
+                if r then
+                    row.head.nameF:SetTextColor(r, g, b)
+                else
+                    row.head.nameF:SetTextColor(0.85, 0.9, 1)
+                end
             end
             -- сообщение в SMF: при смене записи/ширины перезаливаем
             -- (SetMaxLines(1) сам выталкивает старую строку, Clear в 3.3.5 не гарантирован)
@@ -778,7 +805,11 @@ LogRenderInner = function()
                 row.smf:SetWidth(msgW)
                 row.smfEntry, row.smfW = e, msgW
                 pcall(row.smf.Clear, row.smf)
-                row.smf:AddMessage(tostring(e.m or ""), 0.92, 0.92, 0.92)
+                local text = tostring(e.m or "")
+                if e.ch and e.ch ~= "" then
+                    text = "|cff20b2aa[" .. e.ch .. "]|r " .. text
+                end
+                row.smf:AddMessage(text, 0.92, 0.92, 0.92)
             end
             row.smf:SetHeight(msgH)
             row:Show()
@@ -804,7 +835,8 @@ local function SetLogOffset(v)
     LogRender() -- верхнюю границу подрежет сам рендер
 end
 
--- Текущая маска фильтров из состояния галочек
+-- Текущее состояние фильтров из галочек: источники (мировой чат / каналы /
+-- RAW) и маска типов
 local function LogFilterState()
     local players = logCheckboxes.players and logCheckboxes.players:GetChecked() and true or false
     local raw = logCheckboxes.raw and logCheckboxes.raw:GetChecked() and true or false
@@ -812,32 +844,43 @@ local function LogFilterState()
     for _, fc in ipairs(logFlagChecks) do
         if fc.cb:GetChecked() then flags = flags + fc.flag end
     end
-    return players, raw, flags
+    local channels = {}
+    for _, cc in ipairs(logChannelChecks) do
+        if cc.cb and cc.key then
+            channels[cc.key] = cc.cb:GetChecked() and true or false
+        end
+    end
+    return players, raw, flags, channels
 end
 
 local function LogSearch()
-    local players, raw, flags = LogFilterState()
+    local players, raw, flags, channels = LogFilterState()
     local res, total = DTCC.LogSearch({
         text = logTextEdit:GetText(),
         name = logNameEdit:GetText(),
         minT = ComputeMinT(logPeriodValue),
         flags = flags,
+        channels = channels,
         includePlayers = players,
         includeRaw = raw,
     })
     logItems = res
     logTotal = total
-    return players, raw
+    local anyChannel = false
+    for _, on in pairs(channels) do
+        if on then anyChannel = true break end
+    end
+    return players, raw, anyChannel
 end
 
 local function LogRefresh()
     if not window or not window:IsShown() or currentTab ~= 3 then return end
     if not logRows or not logTextEdit then return end
-    local players, raw = LogSearch()
+    local players, raw, anyChannel = LogSearch()
 
     local inLog = (DTCC.db and DTCC.db.log) and #DTCC.db.log or 0
-    if not players and not raw then
-        logCountLabel:SetText("Все источники выключены — отметьте «Игроки» или «RAW»")
+    if not players and not raw and not anyChannel then
+        logCountLabel:SetText("Все источники выключены — отметьте «Мировой чат», канал или «RAW»")
     elseif logTotal == 0 then
         if inLog == 0 then
             logCountLabel:SetText("Найдено: 0 / в логе: 0   |cff909090(если сообщения не попадают в лог — /dtcc debug on и напишите в чат)|r")
@@ -857,6 +900,9 @@ local function LogTooltip(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:ClearLines()
     GameTooltip:AddLine(e.p .. "  —  " .. DTCC.FormatDateFull(e.t), 0.85, 0.9, 1)
+    if e.ch and e.ch ~= "" then
+        GameTooltip:AddLine("Канал: " .. e.ch, 0.6, 0.8, 0.9)
+    end
     local flags = e.f or 0
     local desc = {}
     if bit.band(flags, DTCC.FLAG_RAW) ~= 0 then tinsert(desc, "сырая системная строка (формат не распознан)") end
@@ -869,6 +915,72 @@ local function LogTooltip(self)
     end
     GameTooltip:AddLine("ПКМ — действия над игроком; клик по предмету — подсказка", 0.5, 0.5, 0.5)
     GameTooltip:Show()
+end
+
+-- Ряд источников (строка 1): «Мировой чат», «RAW», затем галочки каналов.
+-- ВАЖНО: рамка чекбокса узкая (26px), подпись живёт ЗА её пределами —
+-- цеплять «LEFT к RIGHT рамки предыдущего» нельзя (квадрат встанет поверх
+-- чужой подписи). Позиции считаем вручную по фактической ширине подписей.
+local function LogLayoutSourceRow()
+    if not logPage then return end
+    local cbX = 4
+    local active = { logCheckboxes.players, logCheckboxes.raw }
+    for _, cc in ipairs(logChannelChecks) do
+        if cc.key then active[#active + 1] = cc end
+    end
+    for _, ctl in ipairs(active) do
+        local cb = ctl.cb or ctl
+        if cb then
+            cb:SetPoint("TOPLEFT", logPage, "TOPLEFT", cbX, -30)
+            cbX = cbX + 26 + 4 + (cb.label:GetStringWidth() or 0) + 14
+        end
+    end
+end
+
+-- (Пере)строить галочки каналов по настройке «Каналы» (worldChannel):
+-- подписи и ключи обновляются на месте, лишние галочки скрываются.
+-- Вызывается при сборке вкладки и на SettingsChanged (список каналов
+-- мог измениться в настройках).
+local function LogRebuildChannelChecks()
+    if not logPage then return end
+    local names = (DTCC.db and DTCC.SplitChannelList(DTCC.db.settings.worldChannel)) or {}
+    for i, name in ipairs(names) do
+        local key = DTCC.utf8lower(name)
+        local cc = logChannelChecks[i]
+        if not cc then
+            -- cc объявлен отдельной строкой выше — замыкание видит local
+            cc = {}
+            cc.cb = DTCC.UI.Check(logPage, name,
+                "Показывать сообщения этого канала в логе.\n(источник — настройка «Каналы»)",
+                function(v)
+                    if DTCC.db and cc.key then
+                        DTCC.db.settings.logChannelShow = DTCC.db.settings.logChannelShow or {}
+                        DTCC.db.settings.logChannelShow[cc.key] = v
+                    end
+                    DTCC.FireEvent("SettingsChanged")
+                    LogRefresh()
+                end)
+            logChannelChecks[i] = cc
+        end
+        if cc.label ~= name then
+            cc.label = name
+            cc.cb.label:SetText(name)
+            -- хит-зона — ровно по новой подписи
+            cc.cb:SetHitRectInsets(0, -(cc.cb.label:GetStringWidth() + 10), 0, 0)
+        end
+        cc.key = key
+        cc.cb:Show()
+        local show = true
+        if DTCC.db and DTCC.db.settings.logChannelShow then
+            show = DTCC.db.settings.logChannelShow[key] ~= false
+        end
+        cc.cb:SetChecked(show)
+    end
+    for i = #names + 1, #logChannelChecks do
+        logChannelChecks[i].key = nil
+        logChannelChecks[i].cb:Hide()
+    end
+    LogLayoutSourceRow()
 end
 
 local function BuildLogPage(parent)
@@ -911,7 +1023,8 @@ local function BuildLogPage(parent)
     end)
     clearBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-    -- строка 2: фильтры-галочки в одну строку.
+    -- строки 2-3: фильтры-галочки. Строка 2 — источники («Мировой чат»,
+    -- «RAW» + галочки каналов из настройки), строка 3 — типы.
     -- ВАЖНО: рамка чекбокса узкая (26px), подпись живёт ЗА её пределами —
     -- цеплять «LEFT к RIGHT рамки предыдущего» нельзя (квадрат встанет поверх
     -- чужой подписи). Позиции считаем вручную по фактической ширине подписей.
@@ -926,8 +1039,8 @@ local function BuildLogPage(parent)
         return cb
     end
 
-    SourceCheck("logShowPlayers", "players", "Игроки",
-        "Сообщения мирового чата от игроков.\nПо умолчанию включено — системные строки не показываются.")
+    SourceCheck("logShowPlayers", "players", "Мировой чат",
+        "Сообщения мирового чата (.chat), приходящие системными строками.\nПо умолчанию включено — системный мусор не показывается.")
     SourceCheck("logShowRaw", "raw", "RAW",
         "RAW-записи: системные строки со ссылкой игрока (входы, достижения,\nлут и другой мусор в нестандартном формате), записанные как есть.")
 
@@ -957,24 +1070,28 @@ local function BuildLogPage(parent)
     FlagCheck("autobl", DTCC.FLAG_AUTOBL, "Авто-ЧС",
         "Только сообщения, за которые игрок попал в ЧС автоматически.")
 
-    -- одна строка: квадрат 26px, подпись в 4px правее него, до следующего
+    -- строка 2 (источники): «Мировой чат» + «RAW» + галочки каналов —
+    -- позиции и галочки каналов раскладывает LogRebuildChannelChecks
+    LogRebuildChannelChecks()
+
+    -- строка 3 (типы): квадрат 26px, подпись в 4px правее него, до следующего
     -- квадрата 14px (по ширине подписи, не по рамке!)
     local cbX = 4
-    for _, ckey in ipairs({ "players", "raw", "friend", "bl", "hidden", "censor", "autobl" }) do
+    for _, ckey in ipairs({ "friend", "bl", "hidden", "censor", "autobl" }) do
         local cb = logCheckboxes[ckey]
         if cb then
-            cb:SetPoint("TOPLEFT", logPage, "TOPLEFT", cbX, -30)
+            cb:SetPoint("TOPLEFT", logPage, "TOPLEFT", cbX, -58)
             cbX = cbX + 26 + 4 + (cb.label:GetStringWidth() or 0) + 14
         end
     end
 
     logCountLabel = MakeLabel(logPage, "", "GameFontNormalSmall")
     logCountLabel:SetTextColor(0.6, 0.6, 0.6)
-    logCountLabel:SetPoint("TOPLEFT", 6, -60)
+    logCountLabel:SetPoint("TOPLEFT", 6, -88)
 
-    local h1 = MakeLabel(logPage, "Время");     h1:SetTextColor(0.5, 0.5, 0.5); h1:SetPoint("TOPLEFT", 10, -78)
-    local h2 = MakeLabel(logPage, "Игрок");     h2:SetTextColor(0.5, 0.5, 0.5); h2:SetPoint("TOPLEFT", 84, -78)
-    local h3 = MakeLabel(logPage, "Сообщение"); h3:SetTextColor(0.5, 0.5, 0.5); h3:SetPoint("TOPLEFT", 174, -78)
+    local h1 = MakeLabel(logPage, "Время");     h1:SetTextColor(0.5, 0.5, 0.5); h1:SetPoint("TOPLEFT", 10, -106)
+    local h2 = MakeLabel(logPage, "Игрок");     h2:SetTextColor(0.5, 0.5, 0.5); h2:SetPoint("TOPLEFT", 84, -106)
+    local h3 = MakeLabel(logPage, "Сообщение"); h3:SetTextColor(0.5, 0.5, 0.5); h3:SetPoint("TOPLEFT", 174, -106)
 
     -- скрытый fontstring для замеров шрифта сообщений
     logMeasure = logPage:CreateFontString(nil, "BACKGROUND", "GameFontNormalSmall")
@@ -1558,6 +1675,8 @@ DTCC.RegisterCallback("ListsChanged", function()
 end)
 
 DTCC.RegisterCallback("SettingsChanged", function()
+    -- список каналов в настройке мог измениться — перестраиваем галочки лога
+    LogRebuildChannelChecks()
     if window and window:IsShown() and currentTab == 4 then
         CNRefresh()
     end

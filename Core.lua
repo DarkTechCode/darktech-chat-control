@@ -127,6 +127,25 @@ function DTCC.CleanName(name)
     return s
 end
 
+-- "RRGGBB" -> r, g, b (0..1); nil при некорректном коде
+function DTCC.HexToRGB(hex)
+    if type(hex) ~= "string" then return nil end
+    local r, g, b = string.match(hex, "^(%x%x)(%x%x)(%x%x)$")
+    if not r then return nil end
+    return tonumber(r, 16) / 255, tonumber(g, 16) / 255, tonumber(b, 16) / 255
+end
+
+-- Список каналов из настройки «Каналы» (разделители: запятая/точка с запятой).
+-- Возвращает массив имён как введены (для подписей галочек), без пустых.
+function DTCC.SplitChannelList(text)
+    local out = {}
+    for name in string.gmatch(tostring(text or ""), "[^,;]+") do
+        name = strtrim(name)
+        if name ~= "" then out[#out + 1] = name end
+    end
+    return out
+end
+
 --------------------------------------------------------------------------------
 -- Время
 --------------------------------------------------------------------------------
@@ -231,9 +250,11 @@ local DEFAULTS = {
 
         logEnabled      = true,
         logLimit        = 3000,
-        logShowPlayers  = true,   -- фильтр вкладки «Лог»: сообщения игроков
+        logShowPlayers  = true,   -- фильтр вкладки «Лог»: сообщения мирового чата (.chat)
         logShowRaw      = false,  -- ... RAW-записи (системные строки с игроком)
         logFilterFlags  = 0,      -- «только эти типы» (маска флагов; 0 = все типы)
+        logChannelShow  = {},     -- ... каналы: [имя канала в нижнем регистре] = bool
+                                  --     (nil/true = показывать; галочки на вкладке «Лог»)
 
         alertEnabled    = true,   -- алерты о ЧС рядом
         alertPopup      = true,   -- всплывающее окно (в стиле SilverDragon)
@@ -245,7 +266,8 @@ local DEFAULTS = {
         alertSayDetect  = true,   -- детект по /say /yell /эмоции рядом
 
         worldTag        = "",     -- тег мирового чата ("" = авто, напр. "[Мир]")
-        worldChannel    = "",     -- режим «канал»: имя канала ("" = системные сообщения)
+        worldChannel    = "",     -- режим «каналы»: имена через запятую
+                                  -- ("" = только системные сообщения .chat)
 
         minimapShow     = true,
         minimapAngle    = -65,
@@ -259,8 +281,10 @@ local DEFAULTS = {
     },
     blacklist = {}, -- [ключ] = { name, added, expires|nil, reason|nil, source }
     friends   = {}, -- [ключ] = { name, added }
-    log       = {}, -- массив { t, p, m, f }
-    dbVersion = 1,
+    factions  = {}, -- [ключ] = "RRGGBB" — цвет имени игрока из мирового чата
+                    -- (сервер красит по фракции; каналы цвет не передают — берём отсюда)
+    log       = {}, -- массив { t, p, m, f, c|nil, ch|nil }
+    dbVersion = 2,
 }
 
 local function CopyDefaults(defaults, db)
@@ -276,8 +300,21 @@ end
 
 function DTCC.InitDB()
     if type(DarkTechCC_DB) ~= "table" then DarkTechCC_DB = {} end
-    CopyDefaults(DEFAULTS, DarkTechCC_DB)
-    DTCC.db = DarkTechCC_DB
+    local db = DarkTechCC_DB
+    -- версию старой базы читаем ДО CopyDefaults (он проставит новую версию
+    -- из DEFAULTS, и сигнал «база старая» пропадёт)
+    local oldVersion = tonumber(db.dbVersion) or 1
+    CopyDefaults(DEFAULTS, db)
+    -- v2: настройка «Канал» (одно имя) стала списком каналов через запятую.
+    -- Сохранённый одиночный «Solo» (PikaWoW) один раз дополняем «Solo Progress».
+    if oldVersion < 2 then
+        local wc = strtrim(tostring(db.settings.worldChannel or ""))
+        if wc ~= "" and DTCC.utf8lower(wc) == "solo" then
+            db.settings.worldChannel = "Solo, Solo Progress"
+        end
+        db.dbVersion = 2
+    end
+    DTCC.db = db
 end
 
 function DTCC.ResetSettings()
