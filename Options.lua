@@ -438,6 +438,7 @@ local function BuildPanel()
         DTCC.db.settings.worldTag = strtrim(text or "")
         DTCC.Print("тег мирового чата: " ..
             (DTCC.db.settings.worldTag ~= "" and DTCC.db.settings.worldTag or "автоопределение"))
+        DTCC.FireEvent("SettingsChanged")
     end)
     tagEdit:SetPoint("TOPLEFT", 10, CY)
     tagEdit:SetText(DTCC.db.settings.worldTag or "")
@@ -461,6 +462,8 @@ local function BuildPanel()
         DTCC.db.settings.worldChannel = strtrim(text or "")
         DTCC.Print("каналы мирового чата: " ..
             (DTCC.db.settings.worldChannel ~= "" and DTCC.db.settings.worldChannel or "выкл (системные сообщения)"))
+        -- без события вкладка «Лог» не перестроит галочки каналов до перезахода
+        DTCC.FireEvent("SettingsChanged")
     end)
     chanEdit:SetPoint("TOPLEFT", 10, CY)
     Advance(28)

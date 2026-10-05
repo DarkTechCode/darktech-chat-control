@@ -278,12 +278,13 @@ local DEFAULTS = {
         logLimit        = 3000,
         logShowPlayers  = true,   -- фильтр вкладки «Лог»: сообщения мирового чата (.chat)
         logShowRaw      = false,  -- ... RAW-записи (системные строки с игроком)
-        logShowSources  = {       -- ... локальные чаты: say / party / guild / whisper
-            say = true, party = true, guild = true, whisper = true,
+        logShowSources  = {       -- ... локальные чаты (по умолчанию ВЫКЛЮЧЕНЫ:
+            say = false,          --     по умолчанию виден только «Мировой чат»)
+            party = false, guild = false, whisper = false,
         },
         logFilterFlags  = 0,      -- «только эти типы» (маска флагов; 0 = все типы)
         logChannelShow  = {},     -- ... каналы: [имя канала в нижнем регистре] = bool
-                                  --     (nil/true = показывать; галочки на вкладке «Лог»)
+                                  --     (виден ТОЛЬКО при явном true; nil = выключен)
 
         alertEnabled    = true,   -- алерты о ЧС рядом
         alertPopup      = true,   -- всплывающее окно (в стиле SilverDragon)
@@ -312,8 +313,8 @@ local DEFAULTS = {
     friends   = {}, -- [ключ] = { name, added }
     factions  = {}, -- [ключ] = "RRGGBB" — цвет имени игрока из мирового чата
                     -- (сервер красит по фракции; каналы цвет не передают — берём отсюда)
-    log       = {}, -- массив { t, p, m, f, c|nil, ch|nil }
-    dbVersion = 2,
+    log       = {}, -- массив { t, p, m, f, c|nil, ch|nil, src|nil }
+    dbVersion = 3,
 }
 
 local function CopyDefaults(defaults, db)
@@ -341,7 +342,17 @@ function DTCC.InitDB()
         if wc ~= "" and DTCC.utf8lower(wc) == "solo" then
             db.settings.worldChannel = "Solo, Solo Progress"
         end
-        db.dbVersion = 2
+    end
+    -- v3: по умолчанию в логе виден только «Мировой чат» — локальные чаты,
+    -- включённые дефолтом v1.7.0, гасим; каналы теперь тоже выключены по
+    -- умолчанию (галочки включаются вручную, semantics: nil = выключен)
+    if oldVersion < 3 then
+        if type(db.settings.logShowSources) == "table" then
+            for _, k in ipairs({ "say", "party", "guild", "whisper" }) do
+                db.settings.logShowSources[k] = false
+            end
+        end
+        db.dbVersion = 3
     end
     DTCC.db = db
 end

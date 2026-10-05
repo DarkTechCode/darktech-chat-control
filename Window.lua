@@ -941,11 +941,40 @@ local function LogRefresh()
     LogRender()
 end
 
+-- Запись принадлежит источнику фокуса? (для прокрутки к свежим записям
+-- ВНОВЬ включённого источника: RAW/канальные записи обычно старые и без
+-- этого остаются «за кадром» ниже свежих сообщений мирового чата)
+local function LogEntryIsFocus(e, focus)
+    if not focus or not e then return false end
+    if focus.kind == "raw" then
+        return bit.band(e.f or 0, DTCC.FLAG_RAW) ~= 0
+    elseif focus.kind == "ch" then
+        return e.ch ~= nil and DTCC.utf8lower(e.ch) == focus.key
+    elseif focus.kind == "src" then
+        if focus.key == "world" then
+            return e.ch == nil and bit.band(e.f or 0, DTCC.FLAG_RAW) == 0
+                and (e.src == nil or e.src == "world")
+        end
+        return e.src == focus.key
+    end
+    return false
+end
+
 -- Смена фильтра/поиска/периода: показываем самые свежие записи (сверху),
--- прокрутка не остаётся где-то в глубине истории
-local function LogFilterChanged()
+-- прокрутка не остаётся где-то в глубине истории. При ВКЛЮЧЕНИИ источника
+-- (focus + enabled) прокручиваем к самой свежей его записи
+local function LogFilterChanged(focus, enabled)
     logOff = 0
     LogRefresh()
+    if focus and enabled and logItems then
+        for i, e in ipairs(logItems) do
+            if LogEntryIsFocus(e, focus) then
+                logOff = i - 1
+                break
+            end
+        end
+        LogRender()
+    end
 end
 
 -- «Очистить лог» по текущим фильтрам: запрос запоминается до подтверждения,
@@ -1062,7 +1091,7 @@ local function LogRebuildChannelChecks()
                         DTCC.db.settings.logChannelShow[cc.key] = v
                     end
                     DTCC.FireEvent("SettingsChanged")
-                    LogFilterChanged()
+                    LogFilterChanged({ kind = "ch", key = cc.key }, v)
                 end)
             logChannelChecks[i] = cc
         end
@@ -1074,9 +1103,10 @@ local function LogRebuildChannelChecks()
         end
         cc.key = key
         cc.cb:Show()
-        local show = true
+        -- канал виден только при явном true (по умолчанию выключены)
+        local show = false
         if DTCC.db and DTCC.db.settings.logChannelShow then
-            show = DTCC.db.settings.logChannelShow[key] ~= false
+            show = DTCC.db.settings.logChannelShow[key] == true
         end
         cc.cb:SetChecked(show)
     end
@@ -1142,12 +1172,15 @@ local function BuildLogPage(parent)
     clearBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     -- фильтры-галочки: создаются без позиций — раскладку (одна строка,
-    -- перенос при нехватке ширины) делает LogLayoutChecks, когда готовы все
+    -- перенос при нехватке ширины) делает LogLayoutChecks, когда готовы все.
+    -- focus — источник для прокрутки при включении (см. LogFilterChanged)
     local function SourceCheck(settingKey, ckey, labelText, tooltip)
+        local focus = (ckey == "players") and { kind = "src", key = "world" }
+            or { kind = "raw" }
         local cb = DTCC.UI.Check(logPage, labelText, tooltip, function(v)
             if DTCC.db then DTCC.db.settings[settingKey] = v end
             DTCC.FireEvent("SettingsChanged")
-            LogFilterChanged()
+            LogFilterChanged(focus, v)
         end)
         if DTCC.db then cb:SetChecked(DTCC.db.settings[settingKey]) end
         logCheckboxes[ckey] = cb
@@ -1162,16 +1195,17 @@ local function BuildLogPage(parent)
     -- локальные чаты: Общий/Группа/Гильдия/Шёпот (только логируются)
     for _, def in ipairs(DTCC.LOCAL_SOURCES) do
         local src = def.src
+        local focus = { kind = "src", key = src }
         local cb = DTCC.UI.Check(logPage, def.label, def.tooltip, function(v)
             if DTCC.db then
                 DTCC.db.settings.logShowSources = DTCC.db.settings.logShowSources or {}
                 DTCC.db.settings.logShowSources[src] = v
             end
             DTCC.FireEvent("SettingsChanged")
-            LogFilterChanged()
+            LogFilterChanged(focus, v)
         end)
         if DTCC.db then
-            cb:SetChecked(DTCC.db.settings.logShowSources[src] ~= false)
+            cb:SetChecked(DTCC.db.settings.logShowSources[src] == true)
         end
         logSourceChecks[#logSourceChecks + 1] = { cb = cb, key = src }
     end
@@ -1568,7 +1602,12 @@ local function SelectTab(id)
     end
     if id == 1 then BLRefresh() end
     if id == 2 then FRRefresh() end
-    if id == 3 then LogRefresh() end
+    if id == 3 then
+        -- список каналов в настройках мог измениться без события (старая
+        -- сессия) — перестраиваем галочки при каждом открытии вкладки
+        LogRebuildChannelChecks()
+        LogRefresh()
+    end
     if id == 4 then CNRefresh(true) end
 end
 DTCC.SelectTab = SelectTab

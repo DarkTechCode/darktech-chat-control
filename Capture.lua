@@ -238,8 +238,8 @@ end
 
 -- Подготовка запроса к логу (общая для поиска и удаления по фильтрам).
 -- opts: { text, name, minT, flags, channels, sources, includeRaw }.
---   channels — «ключ канала (lower) -> bool»: записи каналов видны,
---     только если значение не false;
+--   channels — «ключ канала (lower) -> bool»: записи каналов видны ТОЛЬКО
+--     при явном true (nil/false = выключен; nil целиком = каналы не фильтровать);
 --   sources — «ключ источника -> bool» (world/say/party/guild/whisper):
 --     nil = источники не фильтровать;
 --   includeRaw — RAW-записи (nil = включены);
@@ -268,7 +268,7 @@ function DTCC.LogEntryMatches(e, q)
     if isRaw then
         ok = q.includeRaw
     elseif e.ch and q.channels ~= nil then
-        ok = q.channels[DTCC.utf8lower(e.ch)] ~= false
+        ok = q.channels[DTCC.utf8lower(e.ch)] == true
     else
         ok = q.sources == nil or q.sources[e.src or "world"] ~= false
     end
