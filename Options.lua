@@ -489,6 +489,15 @@ local function BuildPanel()
     secOther:SetPoint("TOPLEFT", 0, CY)
     Advance(24)
 
+    local cbFixNotice = NewCheck(content, "Фикс: гасить неизвестные уведомления каналов сервера",
+        "Ядра частных серверов присылают уведомления каналов, которых нет в клиенте 3.3.5 —\n" ..
+        "они вызывают ошибку Blizzard-чата «ChatFrame.lua: bad argument #1 to 'format'».\n" ..
+        "Такие уведомления подавляются; о каждом новом типе один раз за сеанс пишется в чат.\n" ..
+        "(Встроенная замена аддона ChannelNoticeFix — отдельный аддон можно удалить.)",
+        function(v) DTCC.db.settings.fixChannelNotice = v end)
+    cbFixNotice:SetPoint("TOPLEFT", 10, CY)
+    Advance(24)
+
     local cbMinimap = NewCheck(content, "Кнопка на миникарте",
         nil,
         function(v)
@@ -557,6 +566,7 @@ local function BuildPanel()
         tagEdit:SetText(s.worldTag or "")
         chanEdit:SetText(s.worldChannel or "")
         cbDebug:SetChecked(s.debug)
+        cbFixNotice:SetChecked(s.fixChannelNotice)
         cbMinimap:SetChecked(s.minimapShow)
         wordsInfo:SetText("В списке слов: " .. #(DTCC.db.settings.censorWords or {}))
     end

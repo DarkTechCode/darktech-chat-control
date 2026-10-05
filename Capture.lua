@@ -691,6 +691,45 @@ DTCC.PromoteFilterFirst("CHAT_MSG_SYSTEM", SystemFilter)
 DTCC.PromoteFilterFirst("CHAT_MSG_CHANNEL", ChannelFilter)
 
 --------------------------------------------------------------------------------
+-- Фикс битых уведомлений каналов (встроенная замена аддона ChannelNoticeFix).
+--
+-- Ядра частных серверов (кастомные TrinityCore/AzerothCore и т.п.) присылают
+-- CHAT_MSG_CHANNEL_NOTICE / CHAT_MSG_CHANNEL_NOTICE_USER с типом, для которого
+-- в клиенте 3.3.5 НЕТ строки CHAT_<ТИП>_NOTICE(_BN) — Blizzard-код зовёт
+-- format(nil, ...) и роняет обработчик чата («ChatFrame.lua: bad argument #1
+-- to 'format'»). Фильтры сообщений выполняются в ChatFrame_MessageEventHandler
+-- ДО форматирования строки, поэтому достаточно вернуть true: до Blizzard-кода
+-- событие не дойдёт. О каждом новом типе один раз за сессию пишем в чат.
+--------------------------------------------------------------------------------
+
+local noticeFixReported = {}
+
+local function ChannelNoticeFixFilter(self, event, ...)
+    local db = DTCC.db
+    if not db or not db.settings.fixChannelNotice then return end
+    local noticeType = ...
+    if type(noticeType) ~= "string" then return end
+    if _G["CHAT_" .. noticeType .. "_NOTICE_BN"]
+        or _G["CHAT_" .. noticeType .. "_NOTICE"] then
+        return -- тип известен клиенту: пусть обрабатывает Blizzard-код
+    end
+    if not noticeFixReported[noticeType] then
+        noticeFixReported[noticeType] = true
+        local channelName = select(8, ...)
+        DTCC.Print(DTCC.COLORS.grey .. "сервер прислал неизвестное уведомление канала '" ..
+            noticeType .. "' (канал '" .. tostring(channelName) ..
+            "') — подавлено, фикс ошибки чата.")
+    end
+    return true -- событие считаем обработанным: в Blizzard-код не идём
+end
+
+ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL_NOTICE", ChannelNoticeFixFilter)
+ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL_NOTICE_USER", ChannelNoticeFixFilter)
+
+DTCC.PromoteFilterFirst("CHAT_MSG_CHANNEL_NOTICE", ChannelNoticeFixFilter)
+DTCC.PromoteFilterFirst("CHAT_MSG_CHANNEL_NOTICE_USER", ChannelNoticeFixFilter)
+
+--------------------------------------------------------------------------------
 -- Периодическая уборка: раз в минуту выбрасываем истёкшие записи ЧС,
 -- чтобы окно и подрезка лога не зависели от перезахода в игру.
 --------------------------------------------------------------------------------

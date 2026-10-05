@@ -314,6 +314,12 @@ local DEFAULTS = {
                                   -- ([Solo], [Solo Progress]) и/или имена каналов
                                   -- ("" = всё в «Мировой чат» / только системные)
 
+        fixChannelNotice = true,  -- гасить уведомления каналов, неизвестных
+                                  -- клиенту 3.3.5 (CHAT_MSG_CHANNEL_NOTICE[_USER]):
+                                  -- фикс ошибки Blizzard-чата «ChatFrame.lua:
+                                  -- bad argument #1 to 'format'» (бывш.
+                                  -- отдельный аддон ChannelNoticeFix)
+
         minimapShow     = true,
         minimapAngle    = -65,
 
