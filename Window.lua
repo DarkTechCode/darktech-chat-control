@@ -1196,8 +1196,10 @@ function DTCC.ToggleDebugCopy()
         -- ВЫШЕ главного окна (HIGH) и панели настроек: при HIGH окно рисовалось
         -- ПОД ними — видно, но клики (крестик/перетаскивание) до него не
         -- доходили. Слои сиблингов в 3.3.5 ненадёжны (правило 6) — поднимаем
-        -- СТРАТОЙ, тултипы (TOOLTIP) остаются сверху
-        debugCopyFrame:SetFrameStrata("FULL_SCREEN_DIALOG")
+        -- СТРАТОЙ, тултипы (TOOLTIP) остаются сверху. Имя страты клиент
+        -- ВАЛИДИРУЕТ: полный список 3.3.5 — BACKGROUND, LOW, MEDIUM, HIGH,
+        -- DIALOG, FULLSCREEN, FULLSCREEN_DIALOG, TOOLTIP
+        debugCopyFrame:SetFrameStrata("FULLSCREEN_DIALOG")
         debugCopyFrame:SetBackdrop({
             bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
             edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
