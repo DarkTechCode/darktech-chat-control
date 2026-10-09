@@ -23,10 +23,15 @@
     в «Мировом чате». Для строк без ссылки-игрока дополнительно распознаётся
     формат «[Тег] Имя: сообщение».
 
-    Локальные чаты (say/крик, группа/рейд, гильдия, приват) ТОЛЬКО логируются
+    Локальные чаты (say/крик, группа/рейд, гильдия) ТОЛЬКО логируются
     (поле src, список источников DTCC.LOCAL_SOURCES в Core.lua): без цензуры,
     авто-ЧС и скрытия — сообщения группы/гильдии должны оставаться читаемыми.
     Флаги ЧС/друзей ставятся, чтобы типы-фильтры лога работали и по ним.
+    Приват (шёпот) — исключение: к нему применяется цензура по списку слов
+    (настройка censorWhisper): MASK пересобирает строку в виде клиентского
+    привата со звёздочками, HIDE прячет строку целиком. Лог хранит
+    оригинальный текст с флагами CENSORED/HIDDEN; авто-ЧС и скрытие по ЧС
+    в приватах НЕ работают.
 
     Цвет автора: сервер красит имена в мировом чате по фракции (|cff… перед
     |Hplayer:). Цвет извлекается, пишется в запись лога и запоминается по
@@ -615,9 +620,10 @@ end
 ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", ChannelFilter)
 
 --------------------------------------------------------------------------------
--- Локальные чаты (say/крик, группа/рейд, гильдия, приват): ТОЛЬКО логирование.
--- Без цензуры/авто-ЧС/скрытия — сообщения группы и гильдии обязаны оставаться
--- читаемыми; флаги ЧС/друзей ставим, чтобы типы-фильтры лога работали и тут.
+-- Локальные чаты (say/крик, группа/рейд, гильдия, приват): логирование.
+-- Группа/гильдия/say без обработки — сообщения группы и гильдии обязаны
+-- оставаться читаемыми; флаги ЧС/друзей ставим, чтобы типы-фильтры лога
+-- работали и тут. Приват дополнительно проходит цензуру (censorWhisper).
 --------------------------------------------------------------------------------
 
 local localChatByEvent = {}
@@ -625,6 +631,24 @@ for _, def in ipairs(DTCC.LOCAL_SOURCES) do
     for _, ev in ipairs(def.events) do
         localChatByEvent["CHAT_MSG_" .. ev] = def
     end
+end
+
+-- Строка привата для режима маскирования: вид как у клиентской строки
+-- («[Имя] шепчет: текст» / «Кому [Имя]: текст» — шаблоны берём у клиента),
+-- ник — ссылка игрока (Shift-клик/ПКМ по нему работают, как в обычном чате)
+local function BuildWhisperLine(name, text, outgoing)
+    local link = "|Hplayer:" .. name .. "|h[" .. name .. "]|h"
+    local template = _G[outgoing and "CHAT_WHISPER_INFORM_GET" or "CHAT_WHISPER_GET"]
+    local prefix
+    if type(template) == "string" then
+        -- локализованная строка теоретически может быть кривой — не роняем чат
+        local ok, res = pcall(string.format, template, link)
+        if ok and type(res) == "string" then prefix = res end
+    end
+    if not prefix then
+        prefix = outgoing and ("Кому " .. link .. ": ") or (link .. " шепчет: ")
+    end
+    return prefix .. text
 end
 
 local function LocalChatFilter(self, event, msg, sender)
@@ -641,7 +665,12 @@ local function LocalChatFilter(self, event, msg, sender)
             tostring(sender or "?") .. ": " .. DTCC.DebugEscape(msg))
     end
 
-    if not s.enabled or not s.logEnabled then return end
+    if not s.enabled then return end
+
+    -- Приват — единственный локальный чат с обработкой: цензура работает
+    -- и при выключенном логе (как у цензуры мирового чата)
+    local censorActive = def.src == "whisper" and s.censorEnabled and s.censorWhisper
+    if not s.logEnabled and not censorActive then return end
 
     local name = DTCC.CleanName(tostring(sender or ""))
     if name == "" then return end
@@ -651,12 +680,36 @@ local function LocalChatFilter(self, event, msg, sender)
     if DTCC.Blacklist_Get(name) then flags = flags + DTCC.FLAG_BLACKLIST end
 
     local text = tostring(msg or "")
-    if event == "CHAT_MSG_WHISPER_INFORM" then
-        text = "→ " .. text -- исходящий приват: стрелка отличает его от входящего
+    local outgoing = event == "CHAT_MSG_WHISPER_INFORM"
+
+    -- цензура: те же режимы, что у мирового чата (MASK/HIDE); авто-ЧС
+    -- в приватах не срабатывает
+    local censored = false
+    if censorActive and DTCC.CensorFind(DTCC.utf8lower(text)) then
+        censored = true
+        flags = flags + DTCC.FLAG_CENSORED
+        if s.censorMode == "HIDE" then
+            flags = flags + DTCC.FLAG_HIDDEN
+        end
     end
 
-    DTCC.LogAdd(name, text, flags, { c = DTCC.GetPlayerColor(name), src = def.src })
-    return nil -- отображение в чате не трогаем никогда
+    -- исходящий приват: стрелка отличает его от входящего (в логе)
+    DTCC.LogAdd(name, outgoing and ("→ " .. text) or text, flags,
+        { c = DTCC.GetPlayerColor(name), src = def.src })
+
+    if not censored then
+        return nil -- отображение в чате не трогаем никогда
+    end
+    if s.censorMode == "HIDE" then
+        return true
+    end
+
+    -- MASK: своя строка в стиле клиентского привата (цвет типа чата —
+    -- розовый, как у шёпота), вместо слов — звёздочки
+    local info = ChatTypeInfo and ChatTypeInfo[outgoing and "WHISPER_INFORM" or "WHISPER"]
+    self:AddMessage(BuildWhisperLine(name, DTCC.CensorMask(text), outgoing),
+        info and info.r or 1.0, info and info.g or 0.5, info and info.b or 1.0)
+    return true
 end
 
 for _, def in ipairs(DTCC.LOCAL_SOURCES) do

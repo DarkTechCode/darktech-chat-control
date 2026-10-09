@@ -219,6 +219,15 @@ local function BuildPanel()
     ddMode:SetPoint("TOPLEFT", 10, CY)
     Advance(50)
 
+    local cbCensorWhisper = NewCheck(content, "Применять цензуру к приватным сообщениям (шёпот)",
+        "Слова из списка скрываются/маскируются и в приватах — во входящих и исходящих\n" ..
+        "(режим тот же, что для мирового чата: маскировать *** или скрыть строку целиком).\n" ..
+        "Остальные локальные чаты (группа, гильдия, /say) не затрагиваются.\n" ..
+        "В логе остаётся исходный текст сообщения.",
+        function(v) DTCC.db.settings.censorWhisper = v end)
+    cbCensorWhisper:SetPoint("TOPLEFT", 10, CY)
+    Advance(24)
+
     local cbAutoBL = NewCheck(content, "Автоматически добавлять в ЧС за слово из списка",
         "Если игрок написал сообщение с запрещённым словом — он автоматически попадёт в ЧС на выбранный срок. Сообщение сохранится как причина.",
         function(v) DTCC.db.settings.autoBlacklist = v end)
@@ -550,6 +559,7 @@ local function BuildPanel()
         cbStamps:SetChecked(s.showTimestamps)
         cbFriendsHL:SetChecked(s.friendsHighlight)
         cbCensor:SetChecked(s.censorEnabled)
+        cbCensorWhisper:SetChecked(s.censorWhisper)
         cbAutoBL:SetChecked(s.autoBlacklist)
         RefreshDropdown(ddMode)
         RefreshDropdown(ddBLDuration)

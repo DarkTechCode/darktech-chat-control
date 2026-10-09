@@ -1762,6 +1762,7 @@ end
 --------------------------------------------------------------------------------
 
 local cnPage, cnWordsEdit, cnWordsInfo, cnModeDD, cnDurDD, cnAutoBLCheck, cnEnabledCheck
+local cnWhisperCheck
 local cnFieldDirty   -- пользователь правил поле: не перезатирать при открытии вкладки
 local cnFilling      -- программный SetText тоже дёргает OnTextChanged — правкой не считать
 
@@ -1788,6 +1789,7 @@ local function CNRefresh(refill)
     if not cnEnabledCheck or not DTCC.db then return end
     local s = DTCC.db.settings
     cnEnabledCheck:SetChecked(s.censorEnabled)
+    cnWhisperCheck:SetChecked(s.censorWhisper)
     cnAutoBLCheck:SetChecked(s.autoBlacklist)
     cnModeDD.RefreshText()
     cnDurDD.RefreshText()
@@ -1827,6 +1829,17 @@ local function BuildCensorPage(parent)
         "Скрывать из чата: сообщение с запрещённым словом не показывается вообще " ..
         "(в логе остаётся).")
     cnModeDD:SetPoint("TOPLEFT", 288, -10)
+
+    -- цензура в приватах: в ряд с «Режимом», справа от дропдауна
+    cnWhisperCheck = DTCC.UI.Check(cnPage, "В приватах",
+        "Цензура применяется и к приватным сообщениям (шёпот) — входящим и исходящим.\n" ..
+        "Режим тот же, что для мирового чата: маскировать *** или скрыть строку целиком.\n" ..
+        "Остальные локальные чаты (группа, гильдия, /say) не затрагиваются.",
+        function(v)
+            DTCC.db.settings.censorWhisper = v
+            DTCC.FireEvent("SettingsChanged")
+        end)
+    cnWhisperCheck:SetPoint("TOPLEFT", 452, -8)
 
     cnAutoBLCheck = DTCC.UI.Check(cnPage, "Авто-ЧС за запрещённое слово",
         "Написал запрещённое слово — автоматически в ЧС на выбранный срок. Сообщение сохранится как причина.",
